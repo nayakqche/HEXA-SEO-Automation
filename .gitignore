@@ -1,0 +1,23 @@
+# Secrets
+.env
+
+# Generated output
+outputs/*
+!outputs/.gitkeep
+
+# Grounding cache
+.brand_cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log
