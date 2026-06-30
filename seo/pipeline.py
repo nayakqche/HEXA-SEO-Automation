@@ -186,11 +186,11 @@ def _html_page(meta: dict, body_html: str, image_file: str | None) -> str:
 <meta name="description" content="{desc}">
 <style>
   body{{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-  max-width:760px;margin:0 auto;padding:2rem 1.25rem;color:#1b2a2e;line-height:1.7}}
+  max-width:760px;margin:0 auto;padding:2rem 1.25rem;color:#0f172a;line-height:1.7}}
   .hero{{width:100%;border-radius:14px;margin-bottom:1.5rem}}
-  h1{{font-size:2rem;line-height:1.2}} h2{{margin-top:2rem;color:#0c6e5d}}
-  a{{color:#0c6e5d}} code{{background:#eef3f2;padding:2px 5px;border-radius:4px}}
-  blockquote{{border-left:4px solid #18a07f;margin:1.5rem 0;padding:.4rem 1rem;
-  background:#f3faf8;color:#36474b}}
+  h1{{font-size:2rem;line-height:1.2}} h2{{margin-top:2rem;color:#1e40af}}
+  a{{color:#1e40af}} code{{background:#eef2fb;padding:2px 5px;border-radius:4px}}
+  blockquote{{border-left:4px solid #3b82f6;margin:1.5rem 0;padding:.4rem 1rem;
+  background:#f1f6ff;color:#334155}}
 </style></head>
 <body>{hero}{body_html}</body></html>"""

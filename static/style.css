@@ -1,11 +1,11 @@
 :root {
-  --green: #0c6e5d;
-  --green-bright: #18a07f;
-  --ink: #11241f;
-  --muted: #5f7570;
-  --bg: #f4f8f6;
+  --green: #1e40af;          /* primary — Hexa navy */
+  --green-bright: #3b82f6;   /* accent — Hexa blue */
+  --ink: #0f172a;
+  --muted: #5b6b85;
+  --bg: #f4f7fb;
   --panel: #ffffff;
-  --line: #dde8e4;
+  --line: #dde4ee;
   --bad: #c2410c;
 }
 
@@ -31,7 +31,7 @@ body {
   top: 0;
   z-index: 5;
 }
-.logo { height: 34px; width: auto; }
+.logo { height: 42px; width: auto; }
 .topbar-title { display: flex; flex-direction: column; line-height: 1.25; }
 .topbar-title strong { font-size: 1.02rem; }
 .topbar-title span { font-size: .8rem; color: var(--muted); }
@@ -40,7 +40,7 @@ body {
   font-size: .74rem; font-weight: 600; padding: .25rem .6rem;
   border-radius: 999px; border: 1px solid var(--line);
 }
-.chip.ok { background: #e7f6f1; color: var(--green); border-color: #b9e6da; }
+.chip.ok { background: #e5edff; color: var(--green); border-color: #c1d0f7; }
 .chip.bad { background: #fdeee6; color: var(--bad); border-color: #f6d2bd; }
 
 /* ── Layout ── */
@@ -99,14 +99,14 @@ a { color: var(--green); }
 
 .log {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .8rem; background: #0d1f1b; color: #cfe9e0;
+  font-size: .8rem; background: #0b1a3a; color: #d6e2ff;
   border-radius: 10px; padding: .8rem 1rem; max-height: 220px; overflow-y: auto;
   white-space: pre-wrap; margin-bottom: 1.2rem;
 }
-.log .l-ok { color: #7fe3c4; }
+.log .l-ok { color: #8db4ff; }
 .log .l-warn { color: #f0b67f; }
 .log .l-err { color: #ff9b8a; }
-.log .l-dim { color: #6f8a83; }
+.log .l-dim { color: #7a89a8; }
 
 /* ── Result cards ── */
 .cards { display: grid; gap: 1rem; }
@@ -121,7 +121,7 @@ a { color: var(--green); }
 .card .kw { font-size: .76rem; color: var(--green); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .card .desc { font-size: .86rem; color: var(--muted); margin: .35rem 0 .5rem; }
 .card .tags { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .5rem; }
-.card .tag { font-size: .72rem; background: #e7f6f1; color: var(--green); padding: .12rem .5rem; border-radius: 999px; }
+.card .tag { font-size: .72rem; background: #e5edff; color: var(--green); padding: .12rem .5rem; border-radius: 999px; }
 .card .links { display: flex; gap: .8rem; font-size: .82rem; align-items: center; flex-wrap: wrap; }
 .card .meta-line { font-size: .74rem; color: var(--muted); margin-top: .4rem; }
 .card.err { border-color: #f6d2bd; background: #fdf6f2; }
