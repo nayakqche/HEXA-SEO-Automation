@@ -12,7 +12,7 @@
     <img id="brandLogo" class="logo" src="/api/logo" alt="Hexa Climate">
     <div class="topbar-title">
       <strong>SEO Blog Automation</strong>
-      <span>Claude writes · Gemini illustrates · Grounded in your site</span>
+      <span>Grounded RAG · Claude writes · Gemini illustrates</span>
     </div>
     <div class="status-chips">
       <span class="chip {{ 'ok' if has_claude else 'bad' }}">Claude {{ '✓' if has_claude else '✗ key' }}</span>
@@ -22,20 +22,50 @@
 
   <main class="wrap">
     <section class="panel form-panel">
-      <h1>Generate a batch of SEO blogs</h1>
+      <h1>Generate a batch of grounded SEO blogs</h1>
       <p class="lede">
-        Drop in your keywords, point at the Hexa Climate website, and the
-        platform writes a grounded, SEO-optimized post for each keyword —
-        complete with a hero image. It only writes about what the site
-        actually says, so no made-up claims.
+        Drop in your keywords, list your source URLs, and Claude writes a
+        post for each keyword using only your sources — JSON-first, ready
+        for direct CMS import, with Markdown / HTML / PDF / Word exports.
       </p>
 
       <form id="genForm">
-        <label class="field">
-          <span>Brand website <em>(the source of truth for facts)</em></span>
-          <input type="url" name="website" value="{{ brand_website }}" required>
-        </label>
 
+        <!-- ────── Sources ────── -->
+        <div class="sources-row">
+          <div class="source-box source-primary">
+            <div class="source-head">
+              <span class="badge primary">Primary sources</span>
+              <span class="muted">Source of truth — only place Hexa facts come from</span>
+            </div>
+
+            <label class="field">
+              <span>Brand website <em>(deep-crawled)</em></span>
+              <input type="url" name="website" value="{{ brand_website }}" required>
+            </label>
+
+            <label class="field">
+              <span>Other primary URLs <em>(LinkedIn, press, etc. — one per line)</em></span>
+              <textarea name="primary_sources" rows="3"
+                placeholder="https://www.linkedin.com/company/hexaclimate&#10;https://hexaclimate.com/press/your-announcement"></textarea>
+            </label>
+          </div>
+
+          <div class="source-box source-secondary">
+            <div class="source-head">
+              <span class="badge secondary">Secondary sources</span>
+              <span class="muted">Industry RAG — used for general context, not Hexa facts</span>
+            </div>
+
+            <label class="field">
+              <span>India energy portal URLs <em>(one per line)</em></span>
+              <textarea name="secondary_sources" rows="6"
+                placeholder="https://cea.nic.in/&#10;https://mnre.gov.in/&#10;https://posoco.in/&#10;https://www.mercomindia.com/&#10;https://www.ieefa.org/region/india&#10;https://prayaspune.org/peg/"></textarea>
+            </label>
+          </div>
+        </div>
+
+        <!-- ────── Keywords ────── -->
         <div class="field">
           <span>Keywords</span>
           <div id="dropzone" class="dropzone">
@@ -43,18 +73,18 @@
             <p><strong>Drop a CSV</strong> of keywords here, or <button type="button" id="browseBtn" class="link">browse</button></p>
             <p class="muted" id="csvName">One keyword per row. <a href="#" id="sampleLink">Need a sample?</a></p>
           </div>
-          <textarea name="keywords" id="keywordsText" rows="5"
-            placeholder="…or paste keywords here, one per line:&#10;corporate decarbonization strategy&#10;renewable energy procurement&#10;carbon credits for enterprises"></textarea>
+          <textarea name="keywords" id="keywordsText" rows="4"
+            placeholder="…or paste keywords here, one per line:&#10;green open access for indian industries&#10;corporate ppa structures india&#10;scope 2 emissions reduction strategy"></textarea>
         </div>
 
         <label class="field">
           <span>Extra guidance <em>(optional)</em></span>
-          <input type="text" name="extra" placeholder="e.g. target tone: confident & data-driven; audience: CSOs at large enterprises">
+          <input type="text" name="extra" placeholder="e.g. tone: confident & data-driven; audience: CSOs and procurement heads">
         </label>
 
         <label class="checkbox">
           <input type="checkbox" name="make_images" id="makeImages" checked>
-          <span>Generate a hero image for each post (Gemini)</span>
+          <span>Generate hero + in-body images with Gemini</span>
         </label>
 
         <button type="submit" id="runBtn" class="run-btn">Generate blogs →</button>
@@ -74,7 +104,7 @@
 
   <footer class="foot">
     <span>HEXA Climate · SEO Automation</span>
-    <span class="muted">Grounded generation — facts come from your website, not the model's imagination.</span>
+    <span class="muted">Grounded generation — facts come from your sources, not the model's imagination.</span>
   </footer>
 
   <script src="{{ url_for('static', filename='app.js') }}"></script>

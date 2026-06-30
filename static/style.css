@@ -135,3 +135,38 @@ a { color: var(--green); }
   display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
   max-width: 880px; margin: 0 auto; padding: 1.5rem 1.25rem 2.5rem; font-size: .82rem; color: var(--muted);
 }
+
+/* ── Source boxes (primary + secondary) ── */
+.sources-row { display: grid; gap: 1rem; grid-template-columns: 1fr 1fr; margin: 1rem 0 0.3rem; }
+.source-box {
+  border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; background: #fbfcff;
+}
+.source-primary { border-color: #c1d0f7; background: #f4f7ff; }
+.source-secondary { border-color: #dfe4eb; background: #fafbfd; }
+.source-head { display: flex; align-items: center; gap: .55rem; margin-bottom: .4rem; flex-wrap: wrap; }
+.source-head .muted { font-size: .78rem; }
+.badge {
+  font-size: .68rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  padding: .2rem .55rem; border-radius: 6px;
+}
+.badge.primary { background: var(--green); color: #fff; }
+.badge.secondary { background: #475569; color: #fff; }
+
+@media (max-width: 760px) { .sources-row { grid-template-columns: 1fr; } }
+
+/* ── Download chips on result cards ── */
+.downloads { display: flex; flex-wrap: wrap; gap: .35rem; margin: .55rem 0 .5rem; }
+.dl {
+  font-size: .72rem; font-weight: 600; text-decoration: none;
+  padding: .25rem .55rem; border-radius: 6px;
+  background: #eef2fb; color: var(--green); border: 1px solid #dbe4f5;
+}
+.dl:hover { background: var(--green); color: #fff; border-color: var(--green); }
+.dl-pdf { background: #fdeee6; color: #b14512; border-color: #f5d4be; }
+.dl-pdf:hover { background: #b14512; color: #fff; border-color: #b14512; }
+.dl-doc { background: #eef4ff; color: #1e40af; border-color: #c7d6f4; }
+.dl-html { background: transparent; border-color: var(--line); color: var(--muted); }
+.dl-html:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+.card .subtitle { font-size: .88rem; color: var(--muted); margin: .15rem 0 .4rem; font-style: italic; }
+.meta-line.err { color: var(--bad); }

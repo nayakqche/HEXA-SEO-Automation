@@ -2,10 +2,6 @@
 HEXA SEO Automation — Flask web app.
 
 Run:  python app.py   →  open http://localhost:5000
-
-Flow: upload a CSV of keywords + confirm the Hexa Climate site, and the app
-scrapes the site for grounding, writes an SEO blog per keyword with Claude,
-and generates a hero image per post with Gemini. Progress streams live.
 """
 
 from __future__ import annotations
@@ -48,7 +44,9 @@ def generate():
     make_images = request.form.get("make_images", "true") != "false"
     max_pages = int(os.getenv("MAX_CRAWL_PAGES", "12"))
 
-    # Keywords from an uploaded CSV file, or pasted text in the form.
+    primary_urls = pipeline.parse_urls(request.form.get("primary_sources", ""))
+    secondary_urls = pipeline.parse_urls(request.form.get("secondary_sources", ""))
+
     if "csv" in request.files and request.files["csv"].filename:
         keywords = pipeline.parse_keywords(request.files["csv"])
     else:
@@ -62,6 +60,8 @@ def generate():
         try:
             for event in pipeline.run(
                 keywords, website,
+                primary_urls=primary_urls,
+                secondary_urls=secondary_urls,
                 extra_instructions=extra,
                 make_images=make_images,
                 max_pages=max_pages,
@@ -80,20 +80,18 @@ def generate():
 
 @app.route("/api/logo")
 def logo():
-    """Proxy the live Hexa logo (taken from the brand site) with SVG fallback."""
+    """Proxy the live Hexa logo, with the bundled SVG as fallback."""
     logo_url = request.args.get("url")
     if logo_url:
         result = fetch_logo_bytes(logo_url)
         if result:
             content, content_type = result
             return Response(content, mimetype=content_type)
-    # Fallback: a clean Hexa-style hexagon mark so the UI always renders.
     return send_from_directory("static", "logo.svg")
 
 
 @app.route("/outputs/<path:filename>")
 def outputs(filename):
-    """Serve generated blog files, images, and HTML previews."""
     return send_from_directory(OUTPUT_DIR, filename)
 
 

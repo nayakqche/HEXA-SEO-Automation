@@ -1,5 +1,5 @@
 // HEXA SEO Automation — front-end controller.
-// Streams NDJSON progress from /api/generate and renders a live log + cards.
+// Streams NDJSON progress from /api/generate and renders log + result cards.
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -11,7 +11,7 @@ const cardsEl = $("#cards");
 const bar = $("#progressBar");
 const progressText = $("#progressText");
 
-// ── CSV drop zone ──────────────────────────────────────────────
+// ── CSV drop zone ──
 const dropzone = $("#dropzone");
 const csvInput = $("#csvInput");
 const csvName = $("#csvName");
@@ -35,16 +35,16 @@ dropzone.addEventListener("drop", (e) => {
   }
 });
 
-// ── Sample CSV download ────────────────────────────────────────
+// ── Sample CSV download ──
 $("#sampleLink").addEventListener("click", (e) => {
   e.preventDefault();
   const sample = [
     "keyword",
-    "corporate decarbonization strategy",
-    "renewable energy procurement for enterprises",
-    "carbon offset vs carbon avoidance",
-    "net zero roadmap for manufacturers",
-    "scope 3 emissions reduction",
+    "green open access for indian industries",
+    "corporate ppa structures india",
+    "round-the-clock renewable energy",
+    "scope 2 emissions reduction strategy",
+    "battery energy storage india c&i",
   ].join("\n");
   const url = URL.createObjectURL(new Blob([sample], { type: "text/csv" }));
   const a = document.createElement("a");
@@ -52,7 +52,7 @@ $("#sampleLink").addEventListener("click", (e) => {
   URL.revokeObjectURL(url);
 });
 
-// ── Logging helpers ────────────────────────────────────────────
+// ── Logging helpers ──
 function log(msg, cls = "") {
   const line = document.createElement("div");
   if (cls) line.className = cls;
@@ -68,35 +68,47 @@ function setProgress() {
   progressText.textContent = total ? `${completed} / ${total} posts` : "";
 }
 
-// ── Result card ────────────────────────────────────────────────
+// ── Result card ──
 function renderCard(rec) {
   const card = document.createElement("div");
   card.className = "card";
-  const img = rec.files.image
-    ? `<img class="thumb" src="/outputs/${rec.files.image}" alt="">`
-    : `<div class="thumb placeholder">${rec.image_error ? "image failed" : "no image"}</div>`;
+  const img = rec.hero_image
+    ? `<img class="thumb" src="/outputs/${rec.hero_image}" alt="">`
+    : `<div class="thumb placeholder">${rec.image_errors.length ? "image gen failed" : "no image"}</div>`;
   const tags = (rec.tags || []).map((t) => `<span class="tag">${t}</span>`).join("");
   const cache = rec.usage && rec.usage.cache_read
     ? ` · ${rec.usage.cache_read.toLocaleString()} cached tokens` : "";
+
+  const dl = rec.downloads;
+  const downloadLinks = `
+    <a class="dl dl-json" href="/outputs/${dl.json}" download>JSON</a>
+    <a class="dl dl-md"   href="/outputs/${dl.markdown}" download>MD</a>
+    <a class="dl dl-pdf"  href="/outputs/${dl.pdf}" download>PDF</a>
+    <a class="dl dl-doc"  href="/outputs/${dl.docx}" download>DOCX</a>
+    <a class="dl dl-html" href="/outputs/${dl.html}" target="_blank">Preview ↗</a>
+  `;
+
+  const imgErr = rec.image_errors && rec.image_errors.length
+    ? `<div class="meta-line err">image issues: ${rec.image_errors.map(e => e.split(":")[0]).join(", ")}</div>` : "";
+
   card.innerHTML = `
     ${img}
     <div class="body">
       <span class="kw">${rec.keyword}</span>
       <h3>${rec.title}</h3>
-      <p class="desc">${rec.meta_description || ""}</p>
+      ${rec.subtitle ? `<p class="subtitle">${rec.subtitle}</p>` : ""}
+      <p class="desc">${rec.description}</p>
       <div class="tags">${tags}</div>
-      <div class="links">
-        <a href="/outputs/${rec.files.html}" target="_blank">Preview ↗</a>
-        <a href="/outputs/${rec.files.markdown}" download>Markdown ↓</a>
-        ${rec.files.image ? `<a href="/outputs/${rec.files.image}" download>Image ↓</a>` : ""}
+      <div class="downloads">${downloadLinks}</div>
+      <div class="meta-line">
+        ${rec.word_count} words${rec.category ? ` · ${rec.category}` : ""} · slug: <code>${rec.slug}</code>${cache}
       </div>
-      <div class="meta-line">${rec.word_count} words · slug: <code>${rec.slug}</code>${cache}
-        ${rec.image_error ? ` · <span style="color:var(--bad)">image: ${rec.image_error.slice(0,60)}</span>` : ""}</div>
+      ${imgErr}
     </div>`;
   cardsEl.appendChild(card);
 }
 
-// ── Run ────────────────────────────────────────────────────────
+// ── Run ──
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   runBtn.disabled = true;
@@ -124,7 +136,6 @@ form.addEventListener("submit", async (e) => {
     return reset();
   }
 
-  // Read the NDJSON stream line by line.
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
@@ -154,6 +165,9 @@ function handleEvent(ev) {
       break;
     case "status":
       log(ev.message, "l-dim");
+      break;
+    case "warn":
+      log("! " + ev.message, "l-warn");
       break;
     case "grounded":
       log("✓ " + ev.message, "l-ok");

@@ -1,11 +1,12 @@
 """
-Pipeline — ties the pieces together:
+Pipeline — orchestrates a full SEO run.
 
-    keywords.csv + brand site  →  grounding context (scraped once)
-                               →  per keyword: Claude blog + Gemini hero image
-                               →  saved to outputs/ as .md + .html + .png
+  primary URLs + secondary URLs  →  grounding context (scraped once)
+                                 →  per keyword: Claude writes JSON blog
+                                 →  per image block: Gemini hero + diagrams
+                                 →  outputs/<run>/<post>/{json,md,html,pdf,docx,*.png}
 
-Designed to stream progress events so the web UI can show a live log.
+Yields server-sent events so the web UI can show a live log.
 """
 
 from __future__ import annotations
@@ -18,15 +19,14 @@ import os
 import re
 from pathlib import Path
 
-import markdown as md
-
-from . import image_gen
+from . import image_gen, renderer
 from .blog_writer import write_blog
-from .scraper import BrandContext, crawl
+from .scraper import GroundingContext, build_context
 
 OUTPUT_DIR = Path("outputs")
-CACHE_DIR = Path(".brand_cache")
 
+
+# ── Input parsing ──────────────────────────────────────────────────────────
 
 def parse_keywords(file_storage_or_text) -> list[str]:
     """Accept an uploaded CSV (file-like) or raw text; return clean keywords."""
@@ -44,7 +44,6 @@ def parse_keywords(file_storage_or_text) -> list[str]:
             kw = cell.strip().strip('"')
             if not kw:
                 continue
-            # Skip an obvious header cell.
             if kw.lower() in {"keyword", "keywords", "term", "query"}:
                 continue
             key = kw.lower()
@@ -54,39 +53,54 @@ def parse_keywords(file_storage_or_text) -> list[str]:
     return keywords
 
 
+def parse_urls(text: str) -> list[str]:
+    """One URL per line (commas/whitespace tolerated)."""
+    if not text:
+        return []
+    parts = re.split(r"[\s,]+", text.strip())
+    seen, out = set(), []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        if not p.startswith(("http://", "https://")):
+            p = "https://" + p
+        if p in seen:
+            continue
+        seen.add(p)
+        out.append(p)
+    return out
+
+
+# ── Slugs ──────────────────────────────────────────────────────────────────
+
 def _slugify(text: str) -> str:
-    text = re.sub(r"[^\w\s-]", "", text.lower()).strip()
+    text = re.sub(r"[^\w\s-]", "", (text or "").lower()).strip()
     return re.sub(r"[\s_-]+", "-", text)[:60] or "post"
 
 
-def build_brand_context(website: str, max_pages: int, use_cache: bool = True) -> BrandContext:
-    """Crawl the brand site (or load a cached crawl) into a BrandContext."""
-    CACHE_DIR.mkdir(exist_ok=True)
-    cache_file = CACHE_DIR / f"{_slugify(website)}.json"
-
-    if use_cache and cache_file.exists():
-        data = json.loads(cache_file.read_text())
-        ctx = BrandContext(website=data["website"])
-        ctx.pages = data["pages"]
-        ctx.logo_url = data.get("logo_url")
-        return ctx
-
-    ctx = crawl(website, max_pages=max_pages)
-    cache_file.write_text(
-        json.dumps(
-            {"website": ctx.website, "pages": ctx.pages, "logo_url": ctx.logo_url}
-        )
-    )
-    return ctx
+def _image_prompt(block: dict, slug: str) -> str:
+    """Compose the Gemini prompt for one image block from its alt + caption."""
+    alt = (block.get("alt") or "").strip()
+    cap = (block.get("caption") or "").strip()
+    base = alt or cap or f"hero image for an article about {slug.replace('-', ' ')}"
+    if cap and cap != alt:
+        base = f"{base}. Context: {cap}"
+    return base
 
 
-def run(keywords: list[str], website: str, *, extra_instructions: str = "",
-        make_images: bool = True, max_pages: int = 12):
-    """
-    Generator yielding progress dicts. Each yield is one event:
-        {"event": "...", ...}
-    so the Flask layer can stream it to the browser as server-sent events.
-    """
+# ── Main run ───────────────────────────────────────────────────────────────
+
+def run(
+    keywords: list[str],
+    brand_website: str,
+    *,
+    primary_urls: list[str],
+    secondary_urls: list[str],
+    extra_instructions: str = "",
+    make_images: bool = True,
+    max_pages: int = 12,
+):
     OUTPUT_DIR.mkdir(exist_ok=True)
     run_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = OUTPUT_DIR / run_id
@@ -94,76 +108,131 @@ def run(keywords: list[str], website: str, *, extra_instructions: str = "",
 
     yield {"event": "start", "run_id": run_id, "total": len(keywords)}
 
-    # 1. Grounding context (scrape once, reuse for every keyword).
-    yield {"event": "status", "message": f"Reading {website} for brand grounding…"}
+    # 1. Build grounding context.
+    yield {"event": "status",
+           "message": f"Scraping {brand_website} + "
+                      f"{len(primary_urls)} primary, {len(secondary_urls)} secondary source(s)…"}
     try:
-        ctx = build_brand_context(website, max_pages=max_pages, use_cache=False)
-    except Exception as exc:  # noqa: BLE001 — surface any scrape failure to the UI
+        ctx = build_context(brand_website, primary_urls, secondary_urls, max_pages=max_pages)
+    except Exception as exc:  # noqa: BLE001
         yield {"event": "error", "fatal": True, "message": str(exc)}
         return
 
+    for note in ctx.notes:
+        yield {"event": "warn", "message": note}
+
     yield {
         "event": "grounded",
-        "pages": len(ctx.pages),
+        "primary_pages": len(ctx.primary),
+        "secondary_pages": len(ctx.secondary),
         "chars": ctx.char_count,
         "logo_url": ctx.logo_url,
-        "message": f"Grounded on {len(ctx.pages)} pages "
-                   f"({ctx.char_count:,} chars) from {website}.",
+        "message": f"Grounded on {len(ctx.primary)} primary + "
+                   f"{len(ctx.secondary)} secondary page(s), "
+                   f"{ctx.char_count:,} chars total.",
     }
 
-    results = []
+    results: list[dict] = []
+    primary_text = ctx.primary_text()
+    secondary_text = ctx.secondary_text()
+
     for i, keyword in enumerate(keywords, start=1):
         yield {"event": "keyword_start", "index": i, "keyword": keyword}
 
-        # 2. Write the blog (grounded).
+        # 2. Write the structured blog.
         try:
-            blog = write_blog(
-                keyword, ctx.text, extra_instructions=extra_instructions
+            written = write_blog(
+                keyword, primary_text, secondary_text,
+                extra_instructions=extra_instructions,
             )
         except Exception as exc:  # noqa: BLE001
             yield {"event": "keyword_error", "index": i, "keyword": keyword,
                    "stage": "blog", "message": str(exc)}
             continue
 
-        meta = blog["meta"]
-        slug = _slugify(meta.get("slug") or meta.get("title") or keyword)
+        post = written["post"]
+        slug = _slugify(post.get("slug") or post.get("meta", {}).get("title") or keyword)
+        post["slug"] = slug  # canonicalize after slugify
+
+        # Per-post output directory.
         base = f"{i:02d}-{slug}"
+        post_dir = run_dir / base
+        post_dir.mkdir(parents=True, exist_ok=True)
 
-        # 3. Generate the hero image (non-fatal if it fails).
-        image_file = None
-        image_error = None
-        if make_images and blog["image_prompt"]:
-            try:
-                img_bytes, mime = image_gen.generate_image(blog["image_prompt"])
-                ext = "jpg" if "jpeg" in mime else "png"
-                image_file = f"{base}.{ext}"
-                (run_dir / image_file).write_bytes(img_bytes)
-            except Exception as exc:  # noqa: BLE001
-                image_error = str(exc)
+        # 3. Generate every image block (hero + in-body), if enabled.
+        image_errors: list[str] = []
+        image_blocks: list[dict] = []
+        hero_block = post.get("hero", {}).get("image")
+        if hero_block:
+            hero_block.setdefault("id", "hero")
+            hero_block.setdefault("src", f"/assets/blogs/{slug}/hero.png")
+            image_blocks.append({"_target": hero_block, "id": "hero",
+                                 "alt": hero_block.get("alt", ""),
+                                 "caption": ""})
+        for b in post.get("content", []):
+            if b.get("type") == "image":
+                image_blocks.append({"_target": b, "id": b.get("id", "image"),
+                                     "alt": b.get("alt", ""),
+                                     "caption": b.get("caption", "")})
 
-        # 4. Persist markdown + standalone HTML preview.
-        (run_dir / f"{base}.md").write_text(blog["markdown"], encoding="utf-8")
-        html_body = md.markdown(
-            blog["body"], extensions=["extra", "sane_lists", "toc"]
+        if make_images:
+            for img in image_blocks:
+                filename = f"{img['id']}.png"
+                target = img["_target"]
+                prompt = _image_prompt(img, slug)
+                try:
+                    img_bytes, mime = image_gen.generate_image(prompt)
+                    if "jpeg" in mime:
+                        filename = filename.replace(".png", ".jpg")
+                    (post_dir / filename).write_bytes(img_bytes)
+                    # JSON src uses the CMS path; preview HTML uses the filename.
+                    target["src"] = f"/assets/blogs/{slug}/{filename}"
+                except Exception as exc:  # noqa: BLE001
+                    image_errors.append(f"{img['id']}: {exc}")
+
+        # 4. Write all output formats.
+        (post_dir / "post.json").write_text(
+            json.dumps(post, indent=2, ensure_ascii=False), encoding="utf-8"
         )
-        html_doc = _html_page(meta, html_body, image_file)
-        (run_dir / f"{base}.html").write_text(html_doc, encoding="utf-8")
+        (post_dir / "post.md").write_text(renderer.render_markdown(post), encoding="utf-8")
+        (post_dir / "post.html").write_text(renderer.render_html(post), encoding="utf-8")
+        try:
+            renderer.render_pdf(post, post_dir / "post.pdf", asset_dir=post_dir)
+        except Exception as exc:  # noqa: BLE001
+            image_errors.append(f"pdf: {exc}")
+        try:
+            renderer.render_docx(post, post_dir / "post.docx", asset_dir=post_dir)
+        except Exception as exc:  # noqa: BLE001
+            image_errors.append(f"docx: {exc}")
 
+        # 5. Build the result record consumed by the UI.
+        meta = post.get("meta", {})
+        seo = post.get("seo", {})
         record = {
             "index": i,
             "keyword": keyword,
-            "title": meta.get("title", keyword),
-            "meta_description": meta.get("meta_description", ""),
             "slug": slug,
+            "title": meta.get("title") or seo.get("title", ""),
+            "subtitle": meta.get("subtitle", ""),
+            "description": seo.get("description", ""),
             "tags": meta.get("tags", []),
-            "word_count": len(blog["body"].split()),
-            "files": {
-                "markdown": f"{run_id}/{base}.md",
-                "html": f"{run_id}/{base}.html",
-                "image": f"{run_id}/{image_file}" if image_file else None,
+            "category": meta.get("category", ""),
+            "word_count": _word_count(post),
+            "hero_image": (
+                f"{run_id}/{base}/hero.png"
+                if (post_dir / "hero.png").exists() else
+                next((f"{run_id}/{base}/hero.jpg" for _ in [1]
+                      if (post_dir / "hero.jpg").exists()), None)
+            ),
+            "downloads": {
+                "json":     f"{run_id}/{base}/post.json",
+                "markdown": f"{run_id}/{base}/post.md",
+                "html":     f"{run_id}/{base}/post.html",
+                "pdf":      f"{run_id}/{base}/post.pdf",
+                "docx":     f"{run_id}/{base}/post.docx",
             },
-            "image_error": image_error,
-            "usage": blog["usage"],
+            "image_errors": image_errors,
+            "usage": written["usage"],
         }
         results.append(record)
         yield {"event": "keyword_done", **record}
@@ -173,24 +242,13 @@ def run(keywords: list[str], website: str, *, extra_instructions: str = "",
            "message": f"Finished {len(results)} of {len(keywords)} posts."}
 
 
-def _html_page(meta: dict, body_html: str, image_file: str | None) -> str:
-    title = meta.get("title", "Blog post")
-    desc = meta.get("meta_description", "")
-    hero = (f'<img class="hero" src="{image_file}" alt="{title}">'
-            if image_file else "")
-    return f"""<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title>
-<meta name="description" content="{desc}">
-<style>
-  body{{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-  max-width:760px;margin:0 auto;padding:2rem 1.25rem;color:#0f172a;line-height:1.7}}
-  .hero{{width:100%;border-radius:14px;margin-bottom:1.5rem}}
-  h1{{font-size:2rem;line-height:1.2}} h2{{margin-top:2rem;color:#1e40af}}
-  a{{color:#1e40af}} code{{background:#eef2fb;padding:2px 5px;border-radius:4px}}
-  blockquote{{border-left:4px solid #3b82f6;margin:1.5rem 0;padding:.4rem 1rem;
-  background:#f1f6ff;color:#334155}}
-</style></head>
-<body>{hero}{body_html}</body></html>"""
+def _word_count(post: dict) -> int:
+    n = 0
+    for b in post.get("content", []):
+        if b.get("type") == "paragraph":
+            n += len((b.get("text") or "").split())
+        elif b.get("type") == "list":
+            n += sum(len((i or "").split()) for i in b.get("items", []))
+        elif b.get("type") == "heading":
+            n += len((b.get("text") or "").split())
+    return n

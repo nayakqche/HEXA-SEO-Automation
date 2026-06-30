@@ -1,64 +1,118 @@
 """
-Blog writer — turns a single keyword into an SEO-optimized blog post using the
-Claude API, grounded strictly in the scraped brand context so it never invents
-facts about the company.
+Blog writer — turns one keyword into a structured-JSON blog post that matches
+the Hexa Climate CMS schema exactly. Grounded in two source tiers:
+
+  PRIMARY   → the only place facts ABOUT Hexa may come from.
+  SECONDARY → trusted industry references for general claims & stats.
 """
 
 from __future__ import annotations
 
+import datetime as dt
+import json
 import os
 import re
 
 import anthropic
-import yaml
 
-_SYSTEM_TEMPLATE = """\
-You are the senior SEO content strategist for the brand described in the \
-BRAND CONTEXT below. You write blog posts that rank well on Google AND read \
-like an expert wrote them.
+_SYSTEM = """\
+You are the senior SEO content strategist for Hexa Climate. You write blog \
+posts that rank well on Google AND read like a domain expert wrote them — \
+specifically about the Indian renewable energy / decarbonisation space.
 
-=================== BRAND CONTEXT (your only source of truth) ===================
-{brand_context}
+================== PRIMARY SOURCES (truth about Hexa Climate) ==================
+You may make brand-specific claims (Hexa's services, projects, technology, \
+team, mission, geographies, partners) ONLY when they are supported by these \
+PRIMARY sources. If something isn't here, don't invent it.
+
+{primary_context}
 ================================================================================
 
-GROUNDING RULES — these are absolute:
-- Every claim about the brand (its services, technology, projects, mission, \
-numbers, geographies, partners) MUST be supported by the BRAND CONTEXT above.
-- If the BRAND CONTEXT does not contain a fact, DO NOT invent it. Write around \
-it using general, defensible industry knowledge instead, or omit it.
-- Never fabricate statistics, client names, certifications, awards, or quotes.
-- Match the brand's real tone, terminology, and positioning as shown in the \
-context. Use the brand's own product/service names exactly as written there.
+================ SECONDARY SOURCES (industry context / RAG refs) ===============
+Use these for general industry facts, regulations, trends, market stats and \
+to enrich the post with credible context. NEVER cite these for Hexa-specific \
+claims.
 
-SEO REQUIREMENTS for every post:
-- Target the focus keyword naturally in the title, first 100 words, at least \
-one H2, the meta description, and the slug. No keyword stuffing.
-- 1,100–1,600 words of genuinely useful content.
-- Clear structure: one H1 (the title), several H2 sections, H3s where helpful.
-- Include a short intro, scannable sections, and a concluding call-to-action \
-that points the reader toward the brand.
-- Write for humans first: concrete, specific, no fluff or AI throat-clearing.
+{secondary_context}
+================================================================================
+
+GROUNDING RULES — absolute:
+- Facts about Hexa Climate: PRIMARY sources only.
+- General industry claims: only what's defensible from SECONDARY sources or \
+your general expertise. If a number/stat isn't supported, omit it.
+- Never invent client names, certifications, awards, partner names, or quotes.
+- Match Hexa's real positioning and terminology shown in the primary context. \
+Use Hexa's own product/service names exactly as written.
+
+SEO REQUIREMENTS:
+- Focus keyword used naturally in: title, first paragraph, at least one H2, \
+the meta description, and the slug. No keyword stuffing.
+- 1,100–1,600 words of genuinely useful content for an Indian C&I audience.
+- Clear structure: short intro, multiple H2/H3 sections, scannable lists, and \
+a concluding CTA that points readers toward Hexa Climate.
+- Write for humans first. Concrete, specific, no fluff.
 """
 
-_USER_TEMPLATE = """\
-Write a complete SEO blog post targeting this focus keyword: "{keyword}"
-{extra}
+_USER = """\
+Write a complete SEO blog post for this focus keyword: "{keyword}"
+Today's date is {today}.{extra}
 
-Return the post as a single Markdown document that begins with a YAML \
-frontmatter block, exactly in this shape:
+Return ONLY a single JSON object — no prose before or after, no markdown \
+fencing. The JSON MUST match this schema exactly:
 
----
-title: "A compelling, click-worthy H1 (~60 chars, includes the keyword)"
-meta_description: "150–160 char meta description that includes the keyword"
-slug: "url-friendly-slug-with-keyword"
-focus_keyword: "{keyword}"
-tags: ["tag1", "tag2", "tag3"]
-image_prompt: "A vivid, literal description of a single hero image for this \
-post — photographic, professional, on-brand, no text in the image"
----
+{{
+  "slug": "kebab-case-slug-with-keyword",
+  "seo": {{
+    "title": "Click-worthy SEO title (~60 chars, includes keyword) | Hexa Climate",
+    "description": "150–160 char meta description that includes the keyword.",
+    "keywords": ["focus keyword", "related kw 1", "related kw 2", "..."]
+  }},
+  "meta": {{
+    "title": "Same title as seo.title but WITHOUT the ' | Hexa Climate' suffix",
+    "subtitle": "One-line subtitle (≈120 chars) — what the reader will learn",
+    "author": "Hexa Climate Editorial Team",
+    "readTimeMinutes": 7,
+    "publishedDate": "{today}",
+    "category": "Policy & Regulations | Renewable Energy | Decarbonisation | C&I Procurement | ESG & Reporting",
+    "tags": ["3–6 short topic tags"]
+  }},
+  "hero": {{
+    "image": {{
+      "src": "/assets/blogs/<slug>/hero.png",
+      "alt": "Vivid alt text describing the hero photo (used as the Gemini prompt)"
+    }},
+    "showOverlayTitle": true
+  }},
+  "content": [
+    {{ "id": "intro-heading", "type": "heading", "level": 2, "text": "..." }},
+    {{ "id": "intro-paragraph-1", "type": "paragraph", "text": "..." }},
+    {{ "id": "section-x-heading", "type": "heading", "level": 3, "text": "..." }},
+    {{ "id": "section-x-paragraph-1", "type": "paragraph", "text": "..." }},
+    {{ "id": "section-x-list-1", "type": "list", "style": "unordered", "items": ["...", "..."] }},
+    {{ "id": "diagram-...", "type": "image",
+       "src": "/assets/blogs/<slug>/diagram-foo.png",
+       "alt": "Specific, literal description of the diagram (used as Gemini prompt)",
+       "caption": "Short reader-facing caption" }},
+    ...
+    {{ "id": "cta-heading", "type": "heading", "level": 3, "text": "Ready to ...?" }},
+    {{ "id": "cta-paragraph-1", "type": "paragraph", "text": "..." }}
+  ]
+}}
 
-Then the article body in clean Markdown (start with the H1 as `# Title`).
-Do not output anything before the opening `---` or after the article.
+CONTENT BLOCK RULES:
+- `id` is a unique kebab-case slug per block.
+- `type` is one of: "heading" | "paragraph" | "list" | "image".
+- `heading.level` is 2 or 3.
+- `list.style` is "unordered" or "ordered".
+- Include EXACTLY 2 in-body image blocks (e.g. a diagram + an infographic), \
+in addition to the hero. Their `src` MUST be `/assets/blogs/<slug>/<id>.png`. \
+Write their `alt` as a vivid, literal Gemini image prompt — what should the \
+image look like (subject, composition, mood, no text/logos/watermarks).
+- Use H2 ("level": 2) for the opening section and major sections; use H3 \
+("level": 3) for sub-sections.
+- Always end with a CTA heading + paragraph.
+
+Return ONLY the JSON object.\
 """
 
 
@@ -68,48 +122,54 @@ def _client() -> anthropic.Anthropic:
     return anthropic.Anthropic()
 
 
-def split_frontmatter(markdown: str) -> tuple[dict, str]:
-    """Parse the leading YAML frontmatter; returns (meta_dict, body_markdown)."""
-    m = re.match(r"^\s*---\s*\n(.*?)\n---\s*\n(.*)$", markdown, re.DOTALL)
-    if not m:
-        return {}, markdown.strip()
+def _extract_json(text: str) -> dict:
+    """Pull the JSON object out of Claude's response, tolerant of stray prose."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```\s*$", "", text)
     try:
-        meta = yaml.safe_load(m.group(1)) or {}
-    except yaml.YAMLError:
-        meta = {}
-    return (meta if isinstance(meta, dict) else {}), m.group(2).strip()
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Fall back: take the substring between the first { and the matching last }.
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError(f"Couldn't find JSON in Claude response: {text[:200]}…")
+    return json.loads(text[start:end + 1])
 
 
 def write_blog(
     keyword: str,
-    brand_context: str,
+    primary_context: str,
+    secondary_context: str,
     *,
     extra_instructions: str = "",
     model: str | None = None,
     effort: str | None = None,
 ) -> dict:
-    """
-    Generate one grounded SEO blog for `keyword`.
-
-    Returns a dict: {keyword, markdown, meta, body, image_prompt}.
-    """
+    """Generate one blog post as a Python dict matching the CMS schema."""
     client = _client()
     model = model or os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
     effort = effort or os.getenv("CLAUDE_EFFORT", "high")
+    today = dt.date.today().isoformat()
 
     system = [
         {
             "type": "text",
-            "text": _SYSTEM_TEMPLATE.format(brand_context=brand_context),
-            # Cache the (large, identical-per-run) brand context so every
-            # keyword after the first is far cheaper and faster.
+            "text": _SYSTEM.format(
+                primary_context=primary_context,
+                secondary_context=secondary_context,
+            ),
+            # The grounding context is identical across the batch — cache it
+            # so every keyword after the first is far cheaper/faster.
             "cache_control": {"type": "ephemeral"},
         }
     ]
     extra = f"\nExtra guidance: {extra_instructions}" if extra_instructions else ""
-    user = _USER_TEMPLATE.format(keyword=keyword, extra=extra)
+    user = _USER.format(keyword=keyword, today=today, extra=extra)
 
-    # Stream so the large max_tokens never trips an HTTP timeout.
     with client.messages.stream(
         model=model,
         max_tokens=8000,
@@ -120,20 +180,26 @@ def write_blog(
     ) as stream:
         message = stream.get_final_message()
 
-    markdown = "".join(
-        block.text for block in message.content if block.type == "text"
-    ).strip()
+    raw = "".join(b.text for b in message.content if b.type == "text").strip()
+    post = _extract_json(raw)
 
-    meta, body = split_frontmatter(markdown)
+    # Belt-and-suspenders: ensure required top-level keys exist.
+    post.setdefault("slug", _fallback_slug(keyword))
+    post.setdefault("seo", {})
+    post.setdefault("meta", {})
+    post.setdefault("hero", {})
+    post.setdefault("content", [])
+
     return {
-        "keyword": keyword,
-        "markdown": markdown,
-        "meta": meta,
-        "body": body,
-        "image_prompt": meta.get("image_prompt", ""),
+        "post": post,
         "usage": {
             "input_tokens": message.usage.input_tokens,
             "output_tokens": message.usage.output_tokens,
             "cache_read": getattr(message.usage, "cache_read_input_tokens", 0),
         },
     }
+
+
+def _fallback_slug(keyword: str) -> str:
+    s = re.sub(r"[^\w\s-]", "", keyword.lower()).strip()
+    return re.sub(r"[\s_-]+", "-", s)[:60] or "post"
