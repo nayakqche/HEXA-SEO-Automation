@@ -1,0 +1,29 @@
+# Render Blueprint — one-click deploy for HEXA SEO Automation.
+# Push this file to GitHub, then on Render: New → Blueprint → pick this repo.
+services:
+  - type: web
+    name: hexa-seo-automation
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # 1 worker so a single in-flight run owns the streaming connection;
+    # threads keep the UI responsive. 600s timeout because long batches
+    # of keywords can run well past the default 30s.
+    startCommand: gunicorn --workers 1 --threads 4 --timeout 600 --bind 0.0.0.0:$PORT app:app
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false           # set this manually in the Render dashboard
+      - key: GEMINI_API_KEY
+        sync: false           # set this manually in the Render dashboard
+      - key: BRAND_WEBSITE
+        value: https://hexaclimate.com
+      - key: CLAUDE_MODEL
+        value: claude-opus-4-8
+      - key: GEMINI_IMAGE_MODEL
+        value: gemini-2.5-flash-image-preview
+      - key: CLAUDE_EFFORT
+        value: high
+      - key: MAX_CRAWL_PAGES
+        value: "12"
+      - key: PYTHON_VERSION
+        value: 3.11.9
