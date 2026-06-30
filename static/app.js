@@ -141,7 +141,11 @@ form.addEventListener("submit", async (e) => {
 
   if (!resp.ok) {
     const data = await resp.json().catch(() => ({}));
-    log("Error: " + (data.error || resp.statusText), "l-err");
+    const msg = data.error || resp.statusText || "(no body)";
+    log(`Error ${resp.status}: ${msg}`, "l-err");
+    if (resp.status >= 500) {
+      log("→ Check the Render dashboard → Logs tab to see the exception traceback.", "l-warn");
+    }
     return reset();
   }
 
@@ -198,7 +202,10 @@ function handleEvent(ev) {
       log("● " + ev.message, "l-ok");
       break;
     case "error":
-      log("✗ " + ev.message, "l-err");
+      log("✗ " + (ev.message || "(no error message)"), "l-err");
+      if (ev.trace && ev.trace.length) {
+        ev.trace.forEach(line => log("    " + line, "l-err"));
+      }
       break;
   }
 }

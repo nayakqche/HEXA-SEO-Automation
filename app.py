@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import traceback
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -38,29 +39,39 @@ def index():
 @app.route("/api/generate", methods=["POST"])
 def generate():
     """Kick off a run and stream progress as newline-delimited JSON (NDJSON)."""
-    website = (request.form.get("website") or
-               os.getenv("BRAND_WEBSITE", "https://hexaclimate.com")).strip()
-    extra = (request.form.get("extra") or "").strip()
-    make_images = request.form.get("make_images", "true") != "false"
-    max_pages = int(os.getenv("MAX_CRAWL_PAGES", "12"))
-
-    primary_urls = pipeline.parse_urls(request.form.get("primary_sources", ""))
-    secondary_urls = pipeline.parse_urls(request.form.get("secondary_sources", ""))
-
-    fmt = (request.form.get("format") or "paragraph").lower()
     try:
-        target_words = int(request.form.get("target_words") or 1400)
-    except ValueError:
-        target_words = 1400
+        website = (request.form.get("website") or
+                   os.getenv("BRAND_WEBSITE", "https://hexaclimate.com")).strip()
+        extra = (request.form.get("extra") or "").strip()
+        make_images = request.form.get("make_images", "true") != "false"
+        max_pages = int(os.getenv("MAX_CRAWL_PAGES", "12"))
 
-    if "csv" in request.files and request.files["csv"].filename:
-        keywords = pipeline.parse_keywords(request.files["csv"])
-    else:
-        keywords = pipeline.parse_keywords(request.form.get("keywords", ""))
+        primary_urls = pipeline.parse_urls(request.form.get("primary_sources", ""))
+        secondary_urls = pipeline.parse_urls(request.form.get("secondary_sources", ""))
 
-    if not keywords:
-        return jsonify({"error": "No keywords found. Upload a CSV or paste "
-                                 "one keyword per line."}), 400
+        fmt = (request.form.get("format") or "paragraph").lower()
+        try:
+            target_words = int(request.form.get("target_words") or 1400)
+        except ValueError:
+            target_words = 1400
+
+        if "csv" in request.files and request.files["csv"].filename:
+            keywords = pipeline.parse_keywords(request.files["csv"])
+        else:
+            keywords = pipeline.parse_keywords(request.form.get("keywords", ""))
+
+        if not keywords:
+            return jsonify({"error": "No keywords found. Upload a CSV or paste "
+                                     "one keyword per line."}), 400
+
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            return jsonify({"error": "ANTHROPIC_API_KEY is not set on the server. "
+                                     "Add it in Render → Environment."}), 400
+    except Exception as exc:  # noqa: BLE001
+        tb = traceback.format_exc()
+        print(tb, flush=True)  # surfaces in Render logs
+        return jsonify({"error": f"{type(exc).__name__}: {exc}",
+                        "trace": tb.splitlines()[-6:]}), 500
 
     def event_stream():
         try:
@@ -76,8 +87,13 @@ def generate():
             ):
                 yield json.dumps(event) + "\n"
         except Exception as exc:  # noqa: BLE001
-            yield json.dumps({"event": "error", "fatal": True,
-                              "message": str(exc)}) + "\n"
+            tb = traceback.format_exc()
+            print(tb, flush=True)
+            yield json.dumps({
+                "event": "error", "fatal": True,
+                "message": f"{type(exc).__name__}: {exc or '(no message)'}",
+                "trace": tb.splitlines()[-6:],
+            }) + "\n"
 
     return Response(
         stream_with_context(event_stream()),
