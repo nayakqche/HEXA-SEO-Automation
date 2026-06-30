@@ -190,13 +190,13 @@ function handleEvent(ev) {
       log(`→ [${ev.index}/${total}] writing: ${ev.keyword}`, "");
       break;
     case "keyword_done":
-      completed++; setProgress();
-      log(`  ✓ ${ev.title} (${ev.word_count} words)`, "l-ok");
+      completed = ev.done || (completed + 1); setProgress();
+      log(`  ✓ [${ev.done}/${ev.total}] ${ev.title} (${ev.word_count} words)`, "l-ok");
       renderCard(ev);
       break;
     case "keyword_error":
-      completed++; setProgress();
-      log(`  ✗ ${ev.keyword} — ${ev.stage} failed: ${ev.message}`, "l-err");
+      completed = ev.done || (completed + 1); setProgress();
+      log(`  ✗ [${ev.done}/${ev.total}] ${ev.keyword} — ${ev.message}`, "l-err");
       break;
     case "done":
       log("● " + ev.message, "l-ok");

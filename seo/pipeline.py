@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
-import io
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import image_gen, renderer
@@ -29,32 +29,84 @@ OUTPUT_DIR = Path("outputs")
 
 # ── Input parsing ──────────────────────────────────────────────────────────
 
+_HEADER_CELLS = {"keyword", "keywords", "term", "query"}
+
+
+def _dedupe_clean(cells) -> list[str]:
+    keywords: list[str] = []
+    seen = set()
+    for cell in cells:
+        kw = (cell or "").strip().strip('"')
+        if not kw or kw.lower() in _HEADER_CELLS:
+            continue
+        key = kw.lower()
+        if key not in seen:
+            seen.add(key)
+            keywords.append(kw)
+    return keywords
+
+
+def _keywords_from_xlsx(data: bytes) -> list[str]:
+    """Read keywords from an Excel .xlsx file (first non-empty cell of each row)."""
+    import io as _io
+    from openpyxl import load_workbook
+
+    wb = load_workbook(_io.BytesIO(data), read_only=True, data_only=True)
+    cells: list[str] = []
+    for ws in wb.worksheets:
+        for row in ws.iter_rows(values_only=True):
+            for value in row:
+                if value is None:
+                    continue
+                cells.append(str(value))
+                break  # only the first non-empty cell in each row
+    wb.close()
+    return _dedupe_clean(cells)
+
+
 def parse_keywords(file_storage_or_text) -> list[str]:
+    """
+    Accept a CSV, an Excel .xlsx upload, or pasted text. Returns clean,
+    de-duplicated keywords. Raises ValueError with a clear message for
+    unsupported binary files (old .xls, .pdf, images, etc.).
+    """
     if hasattr(file_storage_or_text, "read"):
         raw = file_storage_or_text.read()
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8-sig", errors="replace")
     else:
         raw = str(file_storage_or_text)
 
-    # splitlines() handles \n, \r\n and lone \r (Excel/Mac CSVs) uniformly,
-    # so csv.reader never sees a stray newline inside a field.
-    lines = raw.splitlines()
+    if isinstance(raw, bytes):
+        # Excel .xlsx (and .docx etc.) are ZIP archives → magic bytes "PK\x03\x04".
+        if raw[:4] == b"PK\x03\x04":
+            try:
+                return _keywords_from_xlsx(raw)
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError(
+                    f"Couldn't read that Excel file ({exc}). "
+                    "Re-save it as .xlsx or export to .csv."
+                ) from exc
+        # Old binary .xls (BIFF) starts with this OLE2 signature.
+        if raw[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+            raise ValueError(
+                "That's an old-format .xls file. Please 'Save As' .xlsx or .csv "
+                "and upload again."
+            )
+        text = raw.decode("utf-8-sig", errors="replace")
+        # Guard: if decoding produced lots of replacement chars, it's binary junk.
+        if text.count("�") > max(5, len(text) * 0.02):
+            raise ValueError(
+                "That file doesn't look like a CSV or Excel sheet. Upload a .csv "
+                "or .xlsx with one keyword per row, or paste keywords as text."
+            )
+    else:
+        text = raw
 
-    keywords: list[str] = []
-    seen = set()
-    for row in csv.reader(lines):
-        for cell in row:
-            kw = cell.strip().strip('"')
-            if not kw:
-                continue
-            if kw.lower() in {"keyword", "keywords", "term", "query"}:
-                continue
-            key = kw.lower()
-            if key not in seen:
-                seen.add(key)
-                keywords.append(kw)
-    return keywords
+    # splitlines() handles \n, \r\n and lone \r (Excel/Mac CSVs) uniformly.
+    cells = []
+    for row in csv.reader(text.splitlines()):
+        if row:
+            cells.append(row[0])  # first column = keyword
+    return _dedupe_clean(cells)
 
 
 def parse_urls(text: str) -> list[str]:
@@ -177,117 +229,148 @@ def run(
         ),
     }
 
-    results: list[dict] = []
     primary_text = ctx.primary_text()
     secondary_text = ctx.secondary_text()
 
-    for i, keyword in enumerate(keywords, start=1):
-        yield {"event": "keyword_start", "index": i, "keyword": keyword}
+    # Shared, read-only config passed to each worker.
+    job = {
+        "run_id": run_id, "run_dir": run_dir,
+        "primary_text": primary_text, "secondary_text": secondary_text,
+        "prim_inv": prim_inv, "sec_inv": sec_inv,
+        "allow_primary": allow_primary, "allow_secondary": allow_secondary,
+        "extra_instructions": extra_instructions, "fmt": fmt,
+        "target_words": target_words, "make_images": make_images,
+    }
 
-        # 2. Write the structured blog (with link inventory in the prompt).
-        try:
-            written = write_blog(
-                keyword, primary_text, secondary_text, prim_inv, sec_inv,
-                extra_instructions=extra_instructions,
-                fmt=fmt, target_words=target_words,
-            )
-        except Exception as exc:  # noqa: BLE001
-            yield {"event": "keyword_error", "index": i, "keyword": keyword,
-                   "stage": "blog", "message": str(exc)}
-            continue
+    concurrency = max(1, min(int(os.getenv("CONCURRENCY", "3")), 8))
+    yield {"event": "status",
+           "message": f"Writing {len(keywords)} post(s), {concurrency} at a time…"}
 
-        post = written["post"]
-        slug = _slugify(post.get("slug") or post.get("meta", {}).get("title") or keyword)
-        post["slug"] = slug
-
-        # 3. Validate every link against the inventory; drop anything sketchy.
-        link_stats = validate_and_clean_links(post, allow_primary, allow_secondary)
-
-        # Per-post output directory.
-        base = f"{i:02d}-{slug}"
-        post_dir = run_dir / base
-        post_dir.mkdir(parents=True, exist_ok=True)
-
-        # 4. Generate every image block (hero + in-body), if enabled.
-        image_errors: list[str] = []
-        image_blocks: list[dict] = []
-        hero_block = post.get("hero", {}).get("image")
-        if hero_block:
-            hero_block.setdefault("id", "hero")
-            hero_block.setdefault("src", f"/assets/blogs/{slug}/hero.png")
-            image_blocks.append({"_target": hero_block, "id": "hero",
-                                 "alt": hero_block.get("alt", ""), "caption": ""})
-        for b in post.get("content", []):
-            if b.get("type") == "image":
-                image_blocks.append({"_target": b, "id": b.get("id", "image"),
-                                     "alt": b.get("alt", ""),
-                                     "caption": b.get("caption", "")})
-
-        if make_images:
-            for img in image_blocks:
-                filename = f"{img['id']}.png"
-                target = img["_target"]
-                prompt = _image_prompt(img, slug)
-                try:
-                    img_bytes, mime = image_gen.generate_image(prompt)
-                    if "jpeg" in mime:
-                        filename = filename.replace(".png", ".jpg")
-                    (post_dir / filename).write_bytes(img_bytes)
-                    target["src"] = f"/assets/blogs/{slug}/{filename}"
-                except Exception as exc:  # noqa: BLE001
-                    image_errors.append(f"{img['id']}: {exc}")
-
-        # 5. Persist all output formats.
-        (post_dir / "post.json").write_text(
-            json.dumps(post, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        (post_dir / "post.md").write_text(renderer.render_markdown(post), encoding="utf-8")
-        (post_dir / "post.html").write_text(
-            renderer.render_html(post, asset_dir=post_dir), encoding="utf-8"
-        )
-        try:
-            renderer.render_pdf(post, post_dir / "post.pdf", asset_dir=post_dir)
-        except Exception as exc:  # noqa: BLE001
-            image_errors.append(f"pdf: {exc}")
-        try:
-            renderer.render_docx(post, post_dir / "post.docx", asset_dir=post_dir)
-        except Exception as exc:  # noqa: BLE001
-            image_errors.append(f"docx: {exc}")
-
-        # 6. Result record for the UI.
-        meta = post.get("meta", {})
-        seo = post.get("seo", {})
-        hero_file = (
-            f"{run_id}/{base}/hero.png" if (post_dir / "hero.png").exists()
-            else f"{run_id}/{base}/hero.jpg" if (post_dir / "hero.jpg").exists()
-            else None
-        )
-        record = {
-            "index": i, "keyword": keyword, "slug": slug,
-            "title": meta.get("title") or seo.get("title", ""),
-            "subtitle": meta.get("subtitle", ""),
-            "description": seo.get("description", ""),
-            "tags": meta.get("tags", []),
-            "category": meta.get("category", ""),
-            "word_count": _word_count(post),
-            "links": link_stats,
-            "hero_image": hero_file,
-            "downloads": {
-                "json":     f"{run_id}/{base}/post.json",
-                "markdown": f"{run_id}/{base}/post.md",
-                "html":     f"{run_id}/{base}/post.html",
-                "pdf":      f"{run_id}/{base}/post.pdf",
-                "docx":     f"{run_id}/{base}/post.docx",
-            },
-            "image_errors": image_errors,
-            "usage": written["usage"],
+    results: list[dict] = []
+    done_count = 0
+    # Run keywords in parallel — the work is I/O-bound (waiting on the LLM /
+    # image API), so a thread pool gives a big speedup without extra CPU.
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = {
+            executor.submit(_process_keyword, i, kw, job): (i, kw)
+            for i, kw in enumerate(keywords, start=1)
         }
-        results.append(record)
-        yield {"event": "keyword_done", **record}
+        for future in as_completed(futures):
+            i, kw = futures[future]
+            try:
+                record = future.result()
+            except Exception as exc:  # noqa: BLE001 — never let one keyword kill the run
+                done_count += 1
+                yield {"event": "keyword_error", "index": i, "keyword": kw,
+                       "stage": "blog", "message": f"{type(exc).__name__}: {exc}",
+                       "done": done_count, "total": len(keywords)}
+                continue
+            done_count += 1
+            results.append(record)
+            yield {"event": "keyword_done", "done": done_count,
+                   "total": len(keywords), **record}
 
+    results.sort(key=lambda r: r["index"])
     (run_dir / "index.json").write_text(json.dumps(results, indent=2))
     yield {"event": "done", "run_id": run_id, "count": len(results),
            "message": f"Finished {len(results)} of {len(keywords)} posts."}
+
+
+def _process_keyword(i: int, keyword: str, job: dict) -> dict:
+    """
+    Generate one blog end-to-end (write → validate links → images → all
+    output formats) and return its UI record. Runs inside a worker thread.
+    Raises on a fatal blog-write failure so the caller can report it.
+    """
+    run_id = job["run_id"]
+    run_dir = job["run_dir"]
+
+    written = write_blog(
+        keyword, job["primary_text"], job["secondary_text"],
+        job["prim_inv"], job["sec_inv"],
+        extra_instructions=job["extra_instructions"],
+        fmt=job["fmt"], target_words=job["target_words"],
+    )
+
+    post = written["post"]
+    slug = _slugify(post.get("slug") or post.get("meta", {}).get("title") or keyword)
+    post["slug"] = slug
+
+    link_stats = validate_and_clean_links(post, job["allow_primary"], job["allow_secondary"])
+
+    base = f"{i:03d}-{slug}"
+    post_dir = run_dir / base
+    post_dir.mkdir(parents=True, exist_ok=True)
+
+    # Collect every image block (hero + in-body).
+    image_errors: list[str] = []
+    image_blocks: list[dict] = []
+    hero_block = post.get("hero", {}).get("image")
+    if hero_block:
+        hero_block.setdefault("id", "hero")
+        hero_block.setdefault("src", f"/assets/blogs/{slug}/hero.png")
+        image_blocks.append({"_target": hero_block, "id": "hero",
+                             "alt": hero_block.get("alt", ""), "caption": ""})
+    for b in post.get("content", []):
+        if b.get("type") == "image":
+            image_blocks.append({"_target": b, "id": b.get("id", "image"),
+                                 "alt": b.get("alt", ""), "caption": b.get("caption", "")})
+
+    if job["make_images"]:
+        for img in image_blocks:
+            filename = f"{img['id']}.png"
+            target = img["_target"]
+            try:
+                img_bytes, mime = image_gen.generate_image(_image_prompt(img, slug))
+                if "jpeg" in mime:
+                    filename = filename.replace(".png", ".jpg")
+                (post_dir / filename).write_bytes(img_bytes)
+                target["src"] = f"/assets/blogs/{slug}/{filename}"
+            except Exception as exc:  # noqa: BLE001
+                image_errors.append(f"{img['id']}: {exc}")
+
+    # Persist all output formats.
+    (post_dir / "post.json").write_text(
+        json.dumps(post, indent=2, ensure_ascii=False), encoding="utf-8")
+    (post_dir / "post.md").write_text(renderer.render_markdown(post), encoding="utf-8")
+    (post_dir / "post.html").write_text(
+        renderer.render_html(post, asset_dir=post_dir), encoding="utf-8")
+    try:
+        renderer.render_pdf(post, post_dir / "post.pdf", asset_dir=post_dir)
+    except Exception as exc:  # noqa: BLE001
+        image_errors.append(f"pdf: {exc}")
+    try:
+        renderer.render_docx(post, post_dir / "post.docx", asset_dir=post_dir)
+    except Exception as exc:  # noqa: BLE001
+        image_errors.append(f"docx: {exc}")
+
+    meta = post.get("meta", {})
+    seo = post.get("seo", {})
+    hero_file = (
+        f"{run_id}/{base}/hero.png" if (post_dir / "hero.png").exists()
+        else f"{run_id}/{base}/hero.jpg" if (post_dir / "hero.jpg").exists()
+        else None
+    )
+    return {
+        "index": i, "keyword": keyword, "slug": slug,
+        "title": meta.get("title") or seo.get("title", ""),
+        "subtitle": meta.get("subtitle", ""),
+        "description": seo.get("description", ""),
+        "tags": meta.get("tags", []),
+        "category": meta.get("category", ""),
+        "word_count": _word_count(post),
+        "links": link_stats,
+        "hero_image": hero_file,
+        "downloads": {
+            "json":     f"{run_id}/{base}/post.json",
+            "markdown": f"{run_id}/{base}/post.md",
+            "html":     f"{run_id}/{base}/post.html",
+            "pdf":      f"{run_id}/{base}/post.pdf",
+            "docx":     f"{run_id}/{base}/post.docx",
+        },
+        "image_errors": image_errors,
+        "usage": written["usage"],
+    }
 
 
 def _image_prompt(block: dict, slug: str) -> str:

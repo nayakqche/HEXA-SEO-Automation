@@ -113,11 +113,19 @@ def _score(url: str) -> int:
     return sum(2 for h in _PRIORITY_HINTS if h in low)
 
 
-def _fetch_page(url: str, session: requests.Session, timeout: int = 20) -> SourcePage | None:
-    try:
-        r = session.get(url, timeout=timeout)
-        r.raise_for_status()
-    except requests.RequestException:
+def _fetch_page(url: str, session: requests.Session, timeout: int = 25) -> SourcePage | None:
+    # Two attempts: many gov/portal sites are slow or rate-limit the first hit.
+    r = None
+    for attempt in range(2):
+        try:
+            r = session.get(url, timeout=timeout, allow_redirects=True)
+            r.raise_for_status()
+            break
+        except requests.RequestException:
+            r = None
+            if attempt == 0:
+                time.sleep(1.0)
+    if r is None:
         return None
     soup = BeautifulSoup(r.text, "html.parser")
     title = (soup.title.string.strip()

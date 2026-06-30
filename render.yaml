@@ -25,5 +25,7 @@ services:
         value: high
       - key: MAX_CRAWL_PAGES
         value: "12"
+      - key: CONCURRENCY
+        value: "3"          # keywords generated in parallel
       - key: PYTHON_VERSION
         value: 3.11.9

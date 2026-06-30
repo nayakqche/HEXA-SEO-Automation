@@ -157,7 +157,7 @@ _HTML_CSS = """
   .image-placeholder{margin:1.5rem 0;padding:2rem 1.25rem;border:2px dashed #c1d0f7;
                      border-radius:12px;background:#f4f7ff;text-align:center}
   .image-placeholder .ip-label{font-size:.72rem;font-weight:700;color:#1d4ed8;
-                               letter-spacing:.08em;text-transform:uppercase}
+                               text-transform:uppercase}
   .image-placeholder .ip-alt{color:#1e293b;margin:.4rem 0 .15rem;font-size:.95rem}
   .image-placeholder .ip-cap{color:#475569;font-size:.85rem;font-style:italic}
   .tags{margin-top:2rem;display:flex;flex-wrap:wrap;gap:.4rem}

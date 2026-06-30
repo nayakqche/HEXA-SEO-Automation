@@ -69,9 +69,10 @@
         <div class="field">
           <span>Keywords</span>
           <div id="dropzone" class="dropzone">
-            <input type="file" id="csvInput" name="csv" accept=".csv,text/csv" hidden>
-            <p><strong>Drop a CSV</strong> of keywords here, or <button type="button" id="browseBtn" class="link">browse</button></p>
-            <p class="muted" id="csvName">One keyword per row. <a href="#" id="sampleLink">Need a sample?</a></p>
+            <input type="file" id="csvInput" name="csv"
+              accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+            <p><strong>Drop a CSV or Excel (.xlsx)</strong> of keywords here, or <button type="button" id="browseBtn" class="link">browse</button></p>
+            <p class="muted" id="csvName">One keyword per row (first column). <a href="#" id="sampleLink">Need a sample?</a></p>
           </div>
           <textarea name="keywords" id="keywordsText" rows="4"
             placeholder="…or paste keywords here, one per line:&#10;green open access for indian industries&#10;corporate ppa structures india&#10;scope 2 emissions reduction strategy"></textarea>
