@@ -1,27 +1,32 @@
-<svg width="220" height="60" viewBox="0 0 220 60" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Hexa Climate">
-  <!-- Hexagonal wireframe mark with 6 vertex nodes, 3 spokes to a center ring. -->
-  <g stroke="#1e40af" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
-    <!-- Hexagon outline (pointy top) -->
-    <polygon points="30,6 51,18 51,42 30,54 9,42 9,18" />
-    <!-- Three spokes from alternating vertices to center -->
-    <line x1="30" y1="6"  x2="30" y2="30" />
-    <line x1="9"  y1="42" x2="30" y2="30" />
-    <line x1="51" y1="42" x2="30" y2="30" />
-    <!-- Center ring -->
-    <circle cx="30" cy="30" r="3.2" stroke-width="2.6" />
+<svg width="232" height="64" viewBox="0 0 232 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Hexa Climate">
+  <!--
+    Brand mark: isometric cube wireframe.
+    Outer hexagon = the cube silhouette (6 visible cube edges).
+    Three spokes = the three cube edges that meet at the front vertex,
+    which is drawn as an open ring at the geometric center.
+  -->
+  <g stroke="#1d4ed8" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Regular pointy-top hexagon, radius 26 around (32,32) -->
+    <polygon points="32,6 54.52,19 54.52,45 32,58 9.48,45 9.48,19" />
+    <!-- Three cube-edges from front corner, stopping at the ring's outer boundary -->
+    <line x1="32"    y1="6"  x2="32"    y2="27.5" />
+    <line x1="9.48"  y1="45" x2="28.10" y2="34.25" />
+    <line x1="54.52" y1="45" x2="35.90" y2="34.25" />
+    <!-- Open center ring = the front vertex of the cube -->
+    <circle cx="32" cy="32" r="4.5" stroke-width="3" />
   </g>
-  <!-- Six vertex nodes -->
-  <g fill="#1e40af">
-    <circle cx="30" cy="6"  r="3.6" />
-    <circle cx="51" cy="18" r="3.6" />
-    <circle cx="51" cy="42" r="3.6" />
-    <circle cx="30" cy="54" r="3.6" />
-    <circle cx="9"  cy="42" r="3.6" />
-    <circle cx="9"  cy="18" r="3.6" />
+  <!-- Six outer cube vertices -->
+  <g fill="#1d4ed8">
+    <circle cx="32"    cy="6"  r="5" />
+    <circle cx="54.52" cy="19" r="5" />
+    <circle cx="54.52" cy="45" r="5" />
+    <circle cx="32"    cy="58" r="5" />
+    <circle cx="9.48"  cy="45" r="5" />
+    <circle cx="9.48"  cy="19" r="5" />
   </g>
-  <!-- Wordmark, stacked -->
+  <!-- Wordmark: stacked "Hexa" / "Climate" -->
   <g font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="800" fill="#0f172a">
-    <text x="70" y="28" font-size="22">Hexa</text>
-    <text x="70" y="50" font-size="22">Climate</text>
+    <text x="78" y="30" font-size="22">Hexa</text>
+    <text x="78" y="52" font-size="22">Climate</text>
   </g>
 </svg>
