@@ -47,6 +47,12 @@ def generate():
     primary_urls = pipeline.parse_urls(request.form.get("primary_sources", ""))
     secondary_urls = pipeline.parse_urls(request.form.get("secondary_sources", ""))
 
+    fmt = (request.form.get("format") or "paragraph").lower()
+    try:
+        target_words = int(request.form.get("target_words") or 1400)
+    except ValueError:
+        target_words = 1400
+
     if "csv" in request.files and request.files["csv"].filename:
         keywords = pipeline.parse_keywords(request.files["csv"])
     else:
@@ -65,6 +71,8 @@ def generate():
                 extra_instructions=extra,
                 make_images=make_images,
                 max_pages=max_pages,
+                fmt=fmt,
+                target_words=target_words,
             ):
                 yield json.dumps(event) + "\n"
         except Exception as exc:  # noqa: BLE001

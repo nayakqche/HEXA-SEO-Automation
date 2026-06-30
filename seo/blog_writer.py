@@ -1,9 +1,7 @@
 """
 Blog writer — turns one keyword into a structured-JSON blog post that matches
-the Hexa Climate CMS schema exactly. Grounded in two source tiers:
-
-  PRIMARY   → the only place facts ABOUT Hexa may come from.
-  SECONDARY → trusted industry references for general claims & stats.
+the Hexa Climate CMS schema. Grounded in two source tiers and constrained to
+only emit hyperlinks pointing at URLs from our verified inventory.
 """
 
 from __future__ import annotations
@@ -12,6 +10,7 @@ import datetime as dt
 import json
 import os
 import re
+from urllib.parse import urlparse
 
 import anthropic
 
@@ -21,43 +20,62 @@ posts that rank well on Google AND read like a domain expert wrote them — \
 specifically about the Indian renewable energy / decarbonisation space.
 
 ================== PRIMARY SOURCES (truth about Hexa Climate) ==================
-You may make brand-specific claims (Hexa's services, projects, technology, \
-team, mission, geographies, partners) ONLY when they are supported by these \
-PRIMARY sources. If something isn't here, don't invent it.
+Use these to ground any claim ABOUT Hexa (services, projects, technology, team,
+mission, geographies). If something isn't here, don't invent it.
 
 {primary_context}
 ================================================================================
 
 ================ SECONDARY SOURCES (industry context / RAG refs) ===============
-Use these for general industry facts, regulations, trends, market stats and \
-to enrich the post with credible context. NEVER cite these for Hexa-specific \
-claims.
+Use these for general industry facts, regulations, trends, market stats.
+NEVER cite these for Hexa-specific claims.
 
 {secondary_context}
 ================================================================================
 
+============================ URL INVENTORY (LINKS) =============================
+The ONLY URLs you may link to are listed below. Any link you emit MUST be in
+this list OR be on the same domain as a listed URL. Never invent paths.
+
+INTERNAL (Hexa Climate properties — use for internal links):
+{primary_inventory}
+
+CITATION (trusted external sources — use for external links):
+{secondary_inventory}
+================================================================================
+
+LINK RULES — absolute:
+- INTERNAL: Add 2–3 internal links per blog. Each link's `href` must be a Hexa
+  URL from the INTERNAL list (or a deep path on the same domain). Anchor text
+  must be a natural phrase already in the paragraph (e.g. "our green energy
+  solutions"), not generic ("click here").
+- CITATION: Add 2–4 external citation links per blog at points where you
+  reference a stat, regulation, or named programme (e.g. "the MNRE's Green
+  Open Access Rules"). The `href` MUST come from the CITATION list (or a
+  deep path on the same domain).
+- Every link is declared in a `links` array attached to its block. Do NOT add
+  inline markdown like [text](url) inside `text`.
+
 GROUNDING RULES — absolute:
-- Facts about Hexa Climate: PRIMARY sources only.
-- General industry claims: only what's defensible from SECONDARY sources or \
-your general expertise. If a number/stat isn't supported, omit it.
-- Never invent client names, certifications, awards, partner names, or quotes.
-- Match Hexa's real positioning and terminology shown in the primary context. \
-Use Hexa's own product/service names exactly as written.
+- Facts about Hexa: PRIMARY sources only.
+- Industry stats: only what's defensible from SECONDARY sources or general
+  expertise. Never fabricate numbers, names, or quotes.
 
 SEO REQUIREMENTS:
-- Focus keyword used naturally in: title, first paragraph, at least one H2, \
-the meta description, and the slug. No keyword stuffing.
-- 1,100–1,600 words of genuinely useful content for an Indian C&I audience.
-- Clear structure: short intro, multiple H2/H3 sections, scannable lists, and \
-a concluding CTA that points readers toward Hexa Climate.
-- Write for humans first. Concrete, specific, no fluff.
+- Focus keyword used naturally in: title, first paragraph, ≥1 H2, the meta
+  description, and the slug. No stuffing.
+- Audience: Indian C&I procurement, sustainability, and ESG decision-makers.
+- Concrete, specific, no fluff or AI throat-clearing.
 """
 
 _USER = """\
 Write a complete SEO blog post for this focus keyword: "{keyword}"
-Today's date is {today}.{extra}
+Today's date is {today}.
 
-Return ONLY a single JSON object — no prose before or after, no markdown \
+FORMAT: {format_directive}
+TARGET LENGTH: ~{target_words} words (acceptable range: {min_words}–{max_words}).{extra}
+
+Return ONLY a single JSON object — no prose before or after, no markdown
 fencing. The JSON MUST match this schema exactly:
 
 {{
@@ -68,12 +86,12 @@ fencing. The JSON MUST match this schema exactly:
     "keywords": ["focus keyword", "related kw 1", "related kw 2", "..."]
   }},
   "meta": {{
-    "title": "Same title as seo.title but WITHOUT the ' | Hexa Climate' suffix",
-    "subtitle": "One-line subtitle (≈120 chars) — what the reader will learn",
+    "title": "Same as seo.title WITHOUT ' | Hexa Climate'",
+    "subtitle": "One-line subtitle (~120 chars) — what the reader will learn",
     "author": "Hexa Climate Editorial Team",
     "readTimeMinutes": 7,
     "publishedDate": "{today}",
-    "category": "Policy & Regulations | Renewable Energy | Decarbonisation | C&I Procurement | ESG & Reporting",
+    "category": "one of: Policy & Regulations | Renewable Energy | Decarbonisation | C&I Procurement | ESG & Reporting",
     "tags": ["3–6 short topic tags"]
   }},
   "hero": {{
@@ -85,32 +103,51 @@ fencing. The JSON MUST match this schema exactly:
   }},
   "content": [
     {{ "id": "intro-heading", "type": "heading", "level": 2, "text": "..." }},
-    {{ "id": "intro-paragraph-1", "type": "paragraph", "text": "..." }},
+    {{ "id": "intro-paragraph-1", "type": "paragraph", "text": "...",
+       "links": [
+         {{ "anchor": "exact substring of text", "href": "https://...",
+            "kind": "internal" }}
+       ] }},
     {{ "id": "section-x-heading", "type": "heading", "level": 3, "text": "..." }},
-    {{ "id": "section-x-paragraph-1", "type": "paragraph", "text": "..." }},
-    {{ "id": "section-x-list-1", "type": "list", "style": "unordered", "items": ["...", "..."] }},
+    {{ "id": "section-x-paragraph-1", "type": "paragraph", "text": "...",
+       "links": [
+         {{ "anchor": "the MNRE's Green Open Access Rules", "href": "https://mnre.gov.in/...",
+            "kind": "citation" }}
+       ] }},
+    {{ "id": "section-x-list-1", "type": "list", "style": "unordered",
+       "items": ["...", "..."], "links": [] }},
     {{ "id": "diagram-...", "type": "image",
        "src": "/assets/blogs/<slug>/diagram-foo.png",
-       "alt": "Specific, literal description of the diagram (used as Gemini prompt)",
+       "alt": "Specific, literal description of the diagram (Gemini prompt)",
        "caption": "Short reader-facing caption" }},
-    ...
     {{ "id": "cta-heading", "type": "heading", "level": 3, "text": "Ready to ...?" }},
-    {{ "id": "cta-paragraph-1", "type": "paragraph", "text": "..." }}
+    {{ "id": "cta-paragraph-1", "type": "paragraph", "text": "...",
+       "links": [
+         {{ "anchor": "talk to our team", "href": "https://hexaclimate.com/contact",
+            "kind": "internal" }}
+       ] }}
   ]
 }}
 
 CONTENT BLOCK RULES:
 - `id` is a unique kebab-case slug per block.
-- `type` is one of: "heading" | "paragraph" | "list" | "image".
+- `type` ∈ heading | paragraph | list | image.
 - `heading.level` is 2 or 3.
 - `list.style` is "unordered" or "ordered".
-- Include EXACTLY 2 in-body image blocks (e.g. a diagram + an infographic), \
-in addition to the hero. Their `src` MUST be `/assets/blogs/<slug>/<id>.png`. \
-Write their `alt` as a vivid, literal Gemini image prompt — what should the \
-image look like (subject, composition, mood, no text/logos/watermarks).
-- Use H2 ("level": 2) for the opening section and major sections; use H3 \
-("level": 3) for sub-sections.
-- Always end with a CTA heading + paragraph.
+- `links` is OPTIONAL on paragraph and list blocks. Omit if no links. When
+  present, each `anchor` MUST be a verbatim substring of `text` (or of one of
+  the list `items`). `kind` is "internal" or "citation".
+- Include EXACTLY 2 in-body image blocks (diagram + infographic) plus the hero.
+  Image `src` MUST be `/assets/blogs/<slug>/<id>.png`. Image `alt` is the
+  Gemini prompt.
+- Always end with a CTA heading + paragraph that contains at least one internal
+  link to a Hexa contact / services page.
+
+LINK DISTRIBUTION:
+- 2–3 INTERNAL links total across the blog (Hexa pages).
+- 2–4 CITATION links total across the blog (secondary sources).
+- Spread them across different blocks. Don't pile multiple links into one
+  paragraph.
 
 Return ONLY the JSON object.\
 """
@@ -123,7 +160,6 @@ def _client() -> anthropic.Anthropic:
 
 
 def _extract_json(text: str) -> dict:
-    """Pull the JSON object out of Claude's response, tolerant of stray prose."""
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -132,7 +168,6 @@ def _extract_json(text: str) -> dict:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Fall back: take the substring between the first { and the matching last }.
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
@@ -140,20 +175,43 @@ def _extract_json(text: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
+def _format_directive(fmt: str) -> str:
+    f = (fmt or "paragraph").lower()
+    if f == "listicle":
+        return (
+            "LISTICLE — short, scannable, list-driven. Use H2s like "
+            "\"1. <Point Title>\", \"2. <Point Title>\". Each numbered point "
+            "has a brief paragraph plus an unordered list of 3–5 bullets. "
+            "Aim for 6–10 numbered points. Keep paragraphs ≤3 sentences."
+        )
+    return (
+        "PARAGRAPH (long-form) — traditional flowing prose with clear H2 "
+        "sections and H3 sub-sections. Use lists sparingly (1–3 across the "
+        "whole post) to break up dense topics. Substantive paragraphs of "
+        "3–6 sentences each."
+    )
+
+
 def write_blog(
     keyword: str,
     primary_context: str,
     secondary_context: str,
+    primary_inventory: str,
+    secondary_inventory: str,
     *,
     extra_instructions: str = "",
+    fmt: str = "paragraph",
+    target_words: int = 1400,
     model: str | None = None,
     effort: str | None = None,
 ) -> dict:
-    """Generate one blog post as a Python dict matching the CMS schema."""
     client = _client()
     model = model or os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
     effort = effort or os.getenv("CLAUDE_EFFORT", "high")
     today = dt.date.today().isoformat()
+    target_words = max(400, min(target_words, 3000))
+    min_w = int(target_words * 0.85)
+    max_w = int(target_words * 1.15)
 
     system = [
         {
@@ -161,14 +219,19 @@ def write_blog(
             "text": _SYSTEM.format(
                 primary_context=primary_context,
                 secondary_context=secondary_context,
+                primary_inventory=primary_inventory or "(none)",
+                secondary_inventory=secondary_inventory or "(none)",
             ),
-            # The grounding context is identical across the batch — cache it
-            # so every keyword after the first is far cheaper/faster.
             "cache_control": {"type": "ephemeral"},
         }
     ]
     extra = f"\nExtra guidance: {extra_instructions}" if extra_instructions else ""
-    user = _USER.format(keyword=keyword, today=today, extra=extra)
+    user = _USER.format(
+        keyword=keyword, today=today,
+        format_directive=_format_directive(fmt),
+        target_words=target_words, min_words=min_w, max_words=max_w,
+        extra=extra,
+    )
 
     with client.messages.stream(
         model=model,
@@ -183,7 +246,6 @@ def write_blog(
     raw = "".join(b.text for b in message.content if b.type == "text").strip()
     post = _extract_json(raw)
 
-    # Belt-and-suspenders: ensure required top-level keys exist.
     post.setdefault("slug", _fallback_slug(keyword))
     post.setdefault("seo", {})
     post.setdefault("meta", {})
@@ -203,3 +265,59 @@ def write_blog(
 def _fallback_slug(keyword: str) -> str:
     s = re.sub(r"[^\w\s-]", "", keyword.lower()).strip()
     return re.sub(r"[\s_-]+", "-", s)[:60] or "post"
+
+
+# ── Link validation (called from pipeline after generation) ────────────────
+
+def _domain(url: str) -> str:
+    try:
+        return urlparse(url).netloc.replace("www.", "").lower()
+    except Exception:
+        return ""
+
+
+def validate_and_clean_links(post: dict, primary_urls: list[str], secondary_urls: list[str]) -> dict:
+    """
+    Walk every block's `links` array and:
+      • drop links whose href domain isn't in primary or secondary inventory
+      • drop links whose anchor isn't a real substring of the block text
+      • return stats about kept/dropped for the UI log
+    """
+    allowed_internal = {_domain(u) for u in primary_urls if u}
+    allowed_citation = {_domain(u) for u in secondary_urls if u}
+    kept = {"internal": 0, "citation": 0}
+    dropped: list[str] = []
+
+    for block in post.get("content", []):
+        links = block.get("links") or []
+        if not links:
+            continue
+        haystack = block.get("text", "")
+        if block.get("type") == "list":
+            haystack += "\n" + "\n".join(block.get("items", []))
+        clean: list[dict] = []
+        for link in links:
+            anchor = (link.get("anchor") or "").strip()
+            href = (link.get("href") or "").strip()
+            if not anchor or not href:
+                dropped.append(f"empty link in {block.get('id', '?')}")
+                continue
+            if anchor not in haystack:
+                dropped.append(f"'{anchor[:40]}…' anchor not in {block.get('id', '?')}")
+                continue
+            dom = _domain(href)
+            if dom in allowed_internal:
+                link["kind"] = "internal"
+            elif dom in allowed_citation:
+                link["kind"] = "citation"
+            else:
+                dropped.append(f"'{href[:60]}…' domain not in inventory")
+                continue
+            kept[link["kind"]] += 1
+            clean.append(link)
+        if clean:
+            block["links"] = clean
+        elif "links" in block:
+            del block["links"]
+
+    return {"kept": kept, "dropped": dropped}

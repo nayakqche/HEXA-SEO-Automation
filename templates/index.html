@@ -77,6 +77,20 @@
             placeholder="…or paste keywords here, one per line:&#10;green open access for indian industries&#10;corporate ppa structures india&#10;scope 2 emissions reduction strategy"></textarea>
         </div>
 
+        <div class="field grid-2">
+          <label>
+            <span>Format</span>
+            <select name="format" id="format">
+              <option value="paragraph" selected>Paragraph (long-form, flowing prose)</option>
+              <option value="listicle">Listicle (numbered points, scannable)</option>
+            </select>
+          </label>
+          <label>
+            <span>Target words</span>
+            <input type="number" name="target_words" id="targetWords" min="500" max="3000" step="100" value="1400">
+          </label>
+        </div>
+
         <label class="field">
           <span>Extra guidance <em>(optional)</em></span>
           <input type="text" name="extra" placeholder="e.g. tone: confident & data-driven; audience: CSOs and procurement heads">

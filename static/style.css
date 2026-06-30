@@ -170,3 +170,20 @@ a { color: var(--green); }
 
 .card .subtitle { font-size: .88rem; color: var(--muted); margin: .15rem 0 .4rem; font-style: italic; }
 .meta-line.err { color: var(--bad); }
+
+/* 2-col field row for format + word count */
+.field.grid-2 { display: grid; grid-template-columns: 1fr 180px; gap: .75rem; }
+.field.grid-2 > label > span { display:block; font-weight:600; font-size:.9rem; margin-bottom:.4rem; }
+.field.grid-2 select, .field.grid-2 input {
+  width: 100%; padding: .55rem .7rem; border: 1px solid var(--line);
+  border-radius: 10px; font: inherit; background: #fbfdfc; color: var(--ink);
+}
+@media (max-width: 560px) { .field.grid-2 { grid-template-columns: 1fr; } }
+
+/* Inline link summary on the card */
+.links-line { font-size: .76rem; color: var(--muted); margin-top: .25rem; }
+.links-line .pill {
+  display: inline-block; padding: .08rem .45rem; border-radius: 6px;
+  background: #eef2fb; color: var(--green); margin-right: .3rem; font-weight: 600;
+}
+.links-line .pill.cite { background: #f1f5f9; color: #334155; }

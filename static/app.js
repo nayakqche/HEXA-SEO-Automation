@@ -91,6 +91,14 @@ function renderCard(rec) {
   const imgErr = rec.image_errors && rec.image_errors.length
     ? `<div class="meta-line err">image issues: ${rec.image_errors.map(e => e.split(":")[0]).join(", ")}</div>` : "";
 
+  const lk = rec.links && rec.links.kept ? rec.links : null;
+  const linksLine = lk
+    ? `<div class="links-line">
+         <span class="pill">${lk.kept.internal} internal</span>
+         <span class="pill cite">${lk.kept.citation} citation</span>
+         ${lk.dropped && lk.dropped.length ? `<span class="muted">· dropped ${lk.dropped.length} unverified</span>` : ""}
+       </div>` : "";
+
   card.innerHTML = `
     ${img}
     <div class="body">
@@ -103,6 +111,7 @@ function renderCard(rec) {
       <div class="meta-line">
         ${rec.word_count} words${rec.category ? ` · ${rec.category}` : ""} · slug: <code>${rec.slug}</code>${cache}
       </div>
+      ${linksLine}
       ${imgErr}
     </div>`;
   cardsEl.appendChild(card);

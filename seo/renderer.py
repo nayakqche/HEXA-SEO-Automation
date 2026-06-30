@@ -2,25 +2,26 @@
 Renderer — converts the canonical blog JSON into Markdown, HTML, PDF, and DOCX.
 
 The JSON is the source of truth (perfect for direct CMS import). The other
-formats are generated from it so they always stay in sync.
+formats are generated from it so they always stay in sync. Paragraphs and
+list items can carry an optional `links: [{anchor, href, kind}]` array — the
+renderer turns those into real inline hyperlinks in every format.
 """
 
 from __future__ import annotations
 
-import io
 import os
-import re
 from pathlib import Path
 from typing import Iterable
 
 from docx import Document
+from docx.opc.constants import RELATIONSHIP_TYPE
+from docx.oxml.ns import qn
+from docx.oxml.shared import OxmlElement
 from docx.shared import Inches, Pt, RGBColor
 from xhtml2pdf import pisa
 
-# ── Helpers ────────────────────────────────────────────────────────────────
 
 def _basename(src: str) -> str:
-    """Strip a leading /assets/blogs/<slug>/ from the CMS src to a filename."""
     return os.path.basename(src) if src else ""
 
 
@@ -28,36 +29,76 @@ def _esc(text: str) -> str:
     return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _link_segments(text: str, links: list[dict]):
+    """
+    Split `text` into a sequence of (segment_text, link_or_none) tuples,
+    splitting on anchor substrings (first match each). Order links by their
+    first occurrence so substitutions don't overlap.
+    """
+    if not links:
+        return [(text, None)]
+    # Find first occurrence of each anchor; drop anchors not present.
+    indexed = []
+    for link in links:
+        anchor = link.get("anchor", "")
+        if not anchor:
+            continue
+        idx = text.find(anchor)
+        if idx == -1:
+            continue
+        indexed.append((idx, anchor, link))
+    indexed.sort(key=lambda t: t[0])
+
+    segments: list[tuple[str, dict | None]] = []
+    cursor = 0
+    used = set()
+    for idx, anchor, link in indexed:
+        # Re-find from cursor so we never re-substitute already-consumed text.
+        find_idx = text.find(anchor, cursor)
+        if find_idx == -1 or id(link) in used:
+            continue
+        if find_idx > cursor:
+            segments.append((text[cursor:find_idx], None))
+        segments.append((anchor, link))
+        cursor = find_idx + len(anchor)
+        used.add(id(link))
+    if cursor < len(text):
+        segments.append((text[cursor:], None))
+    return segments or [(text, None)]
+
+
 # ── Markdown ───────────────────────────────────────────────────────────────
+
+def _md_with_links(text: str, links: list[dict]) -> str:
+    out = []
+    for seg, link in _link_segments(text, links or []):
+        if link:
+            out.append(f"[{seg}]({link['href']})")
+        else:
+            out.append(seg)
+    return "".join(out)
+
 
 def render_markdown(post: dict) -> str:
     meta = post.get("meta", {})
     seo = post.get("seo", {})
     hero = post.get("hero", {}).get("image", {})
 
-    lines: list[str] = []
-    lines.append("---")
+    lines: list[str] = ["---"]
     lines.append(f'title: "{seo.get("title", meta.get("title", ""))}"')
     lines.append(f'meta_description: "{seo.get("description", "")}"')
     lines.append(f'slug: "{post.get("slug", "")}"')
-    if meta.get("category"):
-        lines.append(f'category: "{meta["category"]}"')
-    if meta.get("publishedDate"):
-        lines.append(f'date: "{meta["publishedDate"]}"')
-    if meta.get("author"):
-        lines.append(f'author: "{meta["author"]}"')
-    tags = meta.get("tags") or []
-    if tags:
-        lines.append("tags: [" + ", ".join(f'"{t}"' for t in tags) + "]")
-    keywords = seo.get("keywords") or []
-    if keywords:
-        lines.append("keywords: [" + ", ".join(f'"{k}"' for k in keywords) + "]")
-    lines.append("---")
-    lines.append("")
+    if meta.get("category"): lines.append(f'category: "{meta["category"]}"')
+    if meta.get("publishedDate"): lines.append(f'date: "{meta["publishedDate"]}"')
+    if meta.get("author"): lines.append(f'author: "{meta["author"]}"')
+    if meta.get("tags"):
+        lines.append("tags: [" + ", ".join(f'"{t}"' for t in meta["tags"]) + "]")
+    if seo.get("keywords"):
+        lines.append("keywords: [" + ", ".join(f'"{k}"' for k in seo["keywords"]) + "]")
+    lines.append("---\n")
 
     if hero.get("src"):
-        lines.append(f'![{hero.get("alt", "")}]({_basename(hero["src"])})')
-        lines.append("")
+        lines.append(f'![{hero.get("alt", "")}]({_basename(hero["src"])})\n')
 
     title = meta.get("title") or seo.get("title", "")
     if title:
@@ -68,17 +109,18 @@ def render_markdown(post: dict) -> str:
 
     for block in post.get("content", []):
         t = block.get("type")
+        links = block.get("links") or []
         if t == "heading":
             level = max(2, min(6, int(block.get("level", 2))))
             lines.append("#" * level + " " + block.get("text", ""))
             lines.append("")
         elif t == "paragraph":
-            lines.append(block.get("text", ""))
+            lines.append(_md_with_links(block.get("text", ""), links))
             lines.append("")
         elif t == "list":
-            marker_fn = (lambda i: f"{i + 1}.") if block.get("style") == "ordered" else (lambda i: "-")
+            marker = (lambda i: f"{i + 1}.") if block.get("style") == "ordered" else (lambda i: "-")
             for i, item in enumerate(block.get("items", [])):
-                lines.append(f"{marker_fn(i)} {item}")
+                lines.append(f"{marker(i)} {_md_with_links(item, links)}")
             lines.append("")
         elif t == "image":
             lines.append(f"![{block.get('alt', '')}]({_basename(block.get('src', ''))})")
@@ -99,28 +141,45 @@ _HTML_CSS = """
   .byline{color:#64748b;font-size:.88rem;margin-bottom:1.25rem}
   h1{font-size:2rem;line-height:1.2;margin-bottom:.25rem}
   h2{margin-top:2rem;color:#1d4ed8} h3{margin-top:1.4rem;color:#1e40af}
-  a{color:#1d4ed8}
+  a{color:#1d4ed8;text-decoration:underline}
+  a.internal{color:#1e40af;font-weight:600;text-decoration:none;border-bottom:2px solid #c1d0f7}
   ul,ol{padding-left:1.4rem} li{margin:.35rem 0}
   figure{margin:1.5rem 0} figure img{width:100%;border-radius:12px}
   figcaption{color:#475569;font-size:.88rem;margin-top:.4rem;text-align:center}
   .tags{margin-top:2rem;display:flex;flex-wrap:wrap;gap:.4rem}
-  .tag{font-size:.74rem;background:#e5edff;color:#1d4ed8;
-       padding:.16rem .55rem;border-radius:999px}
+  .tag{font-size:.74rem;background:#e5edff;color:#1d4ed8;padding:.16rem .55rem;border-radius:999px}
 """
+
+
+def _html_with_links(text: str, links: list[dict]) -> str:
+    parts: list[str] = []
+    for seg, link in _link_segments(text, links or []):
+        if link:
+            cls = "internal" if link.get("kind") == "internal" else "citation"
+            target = "" if cls == "internal" else ' target="_blank" rel="noopener"'
+            parts.append(
+                f'<a href="{_esc(link["href"])}" class="{cls}"{target}>{_esc(seg)}</a>'
+            )
+        else:
+            parts.append(_esc(seg))
+    return "".join(parts)
 
 
 def _html_blocks(blocks: Iterable[dict]) -> list[str]:
     out: list[str] = []
     for b in blocks:
         t = b.get("type")
+        links = b.get("links") or []
         if t == "heading":
             lvl = max(2, min(6, int(b.get("level", 2))))
             out.append(f"<h{lvl}>{_esc(b.get('text', ''))}</h{lvl}>")
         elif t == "paragraph":
-            out.append(f"<p>{_esc(b.get('text', ''))}</p>")
+            out.append(f"<p>{_html_with_links(b.get('text', ''), links)}</p>")
         elif t == "list":
             tag = "ol" if b.get("style") == "ordered" else "ul"
-            items = "".join(f"<li>{_esc(i)}</li>" for i in b.get("items", []))
+            items = "".join(
+                f"<li>{_html_with_links(it, links)}</li>" for it in b.get("items", [])
+            )
             out.append(f"<{tag}>{items}</{tag}>")
         elif t == "image":
             src = _basename(b.get("src", ""))
@@ -144,12 +203,9 @@ def render_html(post: dict) -> str:
         if hero.get("src") else ""
     )
     byline_bits = []
-    if meta.get("author"):
-        byline_bits.append(_esc(meta["author"]))
-    if meta.get("publishedDate"):
-        byline_bits.append(_esc(meta["publishedDate"]))
-    if meta.get("readTimeMinutes"):
-        byline_bits.append(f"{meta['readTimeMinutes']} min read")
+    if meta.get("author"): byline_bits.append(_esc(meta["author"]))
+    if meta.get("publishedDate"): byline_bits.append(_esc(meta["publishedDate"]))
+    if meta.get("readTimeMinutes"): byline_bits.append(f"{meta['readTimeMinutes']} min read")
     byline = (' <span class="byline">' + " · ".join(byline_bits) + "</span>") if byline_bits else ""
 
     body = "\n".join(_html_blocks(post.get("content", [])))
@@ -177,14 +233,9 @@ def render_html(post: dict) -> str:
 # ── PDF (via xhtml2pdf) ────────────────────────────────────────────────────
 
 def render_pdf(post: dict, output_path: Path, asset_dir: Path) -> None:
-    """
-    Convert the post to PDF. `asset_dir` is the folder containing image files
-    so that <img src="hero.png"> resolves correctly.
-    """
     html = render_html(post)
 
     def link_callback(uri: str, rel: str) -> str:
-        # xhtml2pdf passes <img src> through here; resolve to local path.
         if uri.startswith(("http://", "https://", "data:")):
             return uri
         p = (asset_dir / uri).resolve()
@@ -197,36 +248,66 @@ def render_pdf(post: dict, output_path: Path, asset_dir: Path) -> None:
 # ── DOCX (via python-docx) ─────────────────────────────────────────────────
 
 _BLUE = RGBColor(0x1D, 0x4E, 0xD8)
+_NAVY = RGBColor(0x1E, 0x40, 0xAF)
 _SLATE = RGBColor(0x47, 0x55, 0x69)
 
 
-def _add_hyperlink_safe_text(p, text: str) -> None:
-    """Add plain text run; python-docx doesn't natively support inline links."""
-    run = p.add_run(text or "")
-    run.font.size = Pt(11)
+def _add_text_run(paragraph, text: str, *, size: int = 11) -> None:
+    if not text:
+        return
+    r = paragraph.add_run(text)
+    r.font.size = Pt(size)
+
+
+def _add_hyperlink(paragraph, url: str, text: str, *, color: RGBColor = _BLUE, size: int = 11) -> None:
+    """Append a real Word hyperlink to a paragraph (python-docx has no native helper)."""
+    part = paragraph.part
+    r_id = part.relate_to(url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+    new_run = OxmlElement("w:r")
+    rPr = OxmlElement("w:rPr")
+    c = OxmlElement("w:color")
+    c.set(qn("w:val"), f"{color[0]:02X}{color[1]:02X}{color[2]:02X}")
+    rPr.append(c)
+    u = OxmlElement("w:u")
+    u.set(qn("w:val"), "single")
+    rPr.append(u)
+    sz = OxmlElement("w:sz")
+    sz.set(qn("w:val"), str(size * 2))  # half-points
+    rPr.append(sz)
+    new_run.append(rPr)
+    t = OxmlElement("w:t")
+    t.text = text
+    t.set(qn("xml:space"), "preserve")
+    new_run.append(t)
+    hyperlink.append(new_run)
+    paragraph._p.append(hyperlink)
+
+
+def _write_paragraph_with_links(paragraph, text: str, links: list[dict]) -> None:
+    for seg, link in _link_segments(text, links or []):
+        if link:
+            _add_hyperlink(paragraph, link["href"], seg)
+        else:
+            _add_text_run(paragraph, seg)
 
 
 def render_docx(post: dict, output_path: Path, asset_dir: Path) -> None:
     meta = post.get("meta", {})
     seo = post.get("seo", {})
     hero = post.get("hero", {}).get("image", {})
-
     doc = Document()
 
-    # Title
     title = meta.get("title") or seo.get("title", "")
     t = doc.add_paragraph()
-    tr = t.add_run(title)
-    tr.bold = True
-    tr.font.size = Pt(22)
-    tr.font.color.rgb = _BLUE
+    tr = t.add_run(title); tr.bold = True
+    tr.font.size = Pt(22); tr.font.color.rgb = _NAVY
 
     if meta.get("subtitle"):
         sp = doc.add_paragraph()
-        sr = sp.add_run(meta["subtitle"])
-        sr.italic = True
-        sr.font.size = Pt(12)
-        sr.font.color.rgb = _SLATE
+        sr = sp.add_run(meta["subtitle"]); sr.italic = True
+        sr.font.size = Pt(12); sr.font.color.rgb = _SLATE
 
     byline_bits = []
     if meta.get("author"): byline_bits.append(meta["author"])
@@ -235,44 +316,39 @@ def render_docx(post: dict, output_path: Path, asset_dir: Path) -> None:
     if byline_bits:
         bp = doc.add_paragraph()
         br = bp.add_run(" · ".join(byline_bits))
-        br.font.size = Pt(9)
-        br.font.color.rgb = _SLATE
+        br.font.size = Pt(9); br.font.color.rgb = _SLATE
 
-    # Hero image
     hero_path = asset_dir / _basename(hero.get("src", "")) if hero.get("src") else None
     if hero_path and hero_path.exists():
         doc.add_picture(str(hero_path), width=Inches(6))
 
-    # Body blocks
     for block in post.get("content", []):
         bt = block.get("type")
+        links = block.get("links") or []
         if bt == "heading":
             lvl = max(1, min(4, int(block.get("level", 2))))
             doc.add_heading(block.get("text", ""), level=lvl)
         elif bt == "paragraph":
             p = doc.add_paragraph()
-            _add_hyperlink_safe_text(p, block.get("text", ""))
+            _write_paragraph_with_links(p, block.get("text", ""), links)
         elif bt == "list":
             style = "List Number" if block.get("style") == "ordered" else "List Bullet"
             for item in block.get("items", []):
-                doc.add_paragraph(item, style=style)
+                p = doc.add_paragraph(style=style)
+                _write_paragraph_with_links(p, item, links)
         elif bt == "image":
             img_path = asset_dir / _basename(block.get("src", ""))
             if img_path.exists():
                 doc.add_picture(str(img_path), width=Inches(6))
             if block.get("caption"):
                 cp = doc.add_paragraph()
-                cr = cp.add_run(block["caption"])
-                cr.italic = True
-                cr.font.size = Pt(9)
-                cr.font.color.rgb = _SLATE
+                cr = cp.add_run(block["caption"]); cr.italic = True
+                cr.font.size = Pt(9); cr.font.color.rgb = _SLATE
 
-    # Tags footer
     if meta.get("tags"):
         doc.add_paragraph()
         fp = doc.add_paragraph()
         fr = fp.add_run("Tags: " + ", ".join(meta["tags"]))
-        fr.font.size = Pt(9)
-        fr.font.color.rgb = _SLATE
+        fr.font.size = Pt(9); fr.font.color.rgb = _SLATE
 
     doc.save(str(output_path))

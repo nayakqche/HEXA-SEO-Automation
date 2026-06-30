@@ -1,8 +1,9 @@
 """
 Pipeline — orchestrates a full SEO run.
 
-  primary URLs + secondary URLs  →  grounding context (scraped once)
+  primary URLs + secondary URLs  →  grounding context + URL inventory
                                  →  per keyword: Claude writes JSON blog
+                                 →  links validated against URL inventory
                                  →  per image block: Gemini hero + diagrams
                                  →  outputs/<run>/<post>/{json,md,html,pdf,docx,*.png}
 
@@ -15,12 +16,11 @@ import csv
 import datetime as dt
 import io
 import json
-import os
 import re
 from pathlib import Path
 
 from . import image_gen, renderer
-from .blog_writer import write_blog
+from .blog_writer import validate_and_clean_links, write_blog
 from .scraper import GroundingContext, build_context
 
 OUTPUT_DIR = Path("outputs")
@@ -29,7 +29,6 @@ OUTPUT_DIR = Path("outputs")
 # ── Input parsing ──────────────────────────────────────────────────────────
 
 def parse_keywords(file_storage_or_text) -> list[str]:
-    """Accept an uploaded CSV (file-like) or raw text; return clean keywords."""
     if hasattr(file_storage_or_text, "read"):
         raw = file_storage_or_text.read()
         if isinstance(raw, bytes):
@@ -54,7 +53,6 @@ def parse_keywords(file_storage_or_text) -> list[str]:
 
 
 def parse_urls(text: str) -> list[str]:
-    """One URL per line (commas/whitespace tolerated)."""
     if not text:
         return []
     parts = re.split(r"[\s,]+", text.strip())
@@ -79,14 +77,35 @@ def _slugify(text: str) -> str:
     return re.sub(r"[\s_-]+", "-", text)[:60] or "post"
 
 
-def _image_prompt(block: dict, slug: str) -> str:
-    """Compose the Gemini prompt for one image block from its alt + caption."""
-    alt = (block.get("alt") or "").strip()
-    cap = (block.get("caption") or "").strip()
-    base = alt or cap or f"hero image for an article about {slug.replace('-', ' ')}"
-    if cap and cap != alt:
-        base = f"{base}. Context: {cap}"
-    return base
+# ── URL inventory (what Claude is allowed to link to) ──────────────────────
+
+def _build_inventory(ctx: GroundingContext, extra_urls: list[str]) -> tuple[str, str, list[str], list[str]]:
+    """
+    Build the (primary_inventory_text, secondary_inventory_text,
+              primary_url_list, secondary_url_list) tuple.
+    """
+    prim_pages = [(p.url, p.title) for p in ctx.primary]
+    # Include any extra primary URLs the user passed even if we couldn't scrape them.
+    for u in extra_urls:
+        if u and not any(u == p[0] for p in prim_pages):
+            prim_pages.append((u, urlpath_title(u)))
+    sec_pages = [(p.url, p.title) for p in ctx.secondary]
+
+    def fmt(pairs):
+        if not pairs:
+            return "(none)"
+        return "\n".join(f"- {url}  →  \"{title[:80]}\"" for url, title in pairs)
+
+    prim_urls = [u for u, _ in prim_pages]
+    sec_urls = [u for u, _ in sec_pages]
+    return fmt(prim_pages), fmt(sec_pages), prim_urls, sec_urls
+
+
+def urlpath_title(url: str) -> str:
+    """Derive a readable title from a URL when we couldn't fetch the page."""
+    from urllib.parse import urlparse
+    p = urlparse(url)
+    return (p.netloc + p.path).rstrip("/") or url
 
 
 # ── Main run ───────────────────────────────────────────────────────────────
@@ -100,6 +119,8 @@ def run(
     extra_instructions: str = "",
     make_images: bool = True,
     max_pages: int = 12,
+    fmt: str = "paragraph",
+    target_words: int = 1400,
 ):
     OUTPUT_DIR.mkdir(exist_ok=True)
     run_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -108,7 +129,7 @@ def run(
 
     yield {"event": "start", "run_id": run_id, "total": len(keywords)}
 
-    # 1. Build grounding context.
+    # 1. Build grounding context + URL inventory.
     yield {"event": "status",
            "message": f"Scraping {brand_website} + "
                       f"{len(primary_urls)} primary, {len(secondary_urls)} secondary source(s)…"}
@@ -121,15 +142,24 @@ def run(
     for note in ctx.notes:
         yield {"event": "warn", "message": note}
 
+    prim_inv, sec_inv, allow_primary, allow_secondary = _build_inventory(
+        ctx, [brand_website] + primary_urls
+    )
+
     yield {
         "event": "grounded",
         "primary_pages": len(ctx.primary),
         "secondary_pages": len(ctx.secondary),
         "chars": ctx.char_count,
         "logo_url": ctx.logo_url,
-        "message": f"Grounded on {len(ctx.primary)} primary + "
-                   f"{len(ctx.secondary)} secondary page(s), "
-                   f"{ctx.char_count:,} chars total.",
+        "fmt": fmt,
+        "target_words": target_words,
+        "message": (
+            f"Grounded on {len(ctx.primary)} primary + {len(ctx.secondary)} secondary "
+            f"page(s) ({ctx.char_count:,} chars). "
+            f"Link inventory: {len(allow_primary)} internal, {len(allow_secondary)} citation. "
+            f"Format: {fmt}, ~{target_words} words/post."
+        ),
     }
 
     results: list[dict] = []
@@ -139,11 +169,12 @@ def run(
     for i, keyword in enumerate(keywords, start=1):
         yield {"event": "keyword_start", "index": i, "keyword": keyword}
 
-        # 2. Write the structured blog.
+        # 2. Write the structured blog (with link inventory in the prompt).
         try:
             written = write_blog(
-                keyword, primary_text, secondary_text,
+                keyword, primary_text, secondary_text, prim_inv, sec_inv,
                 extra_instructions=extra_instructions,
+                fmt=fmt, target_words=target_words,
             )
         except Exception as exc:  # noqa: BLE001
             yield {"event": "keyword_error", "index": i, "keyword": keyword,
@@ -152,14 +183,17 @@ def run(
 
         post = written["post"]
         slug = _slugify(post.get("slug") or post.get("meta", {}).get("title") or keyword)
-        post["slug"] = slug  # canonicalize after slugify
+        post["slug"] = slug
+
+        # 3. Validate every link against the inventory; drop anything sketchy.
+        link_stats = validate_and_clean_links(post, allow_primary, allow_secondary)
 
         # Per-post output directory.
         base = f"{i:02d}-{slug}"
         post_dir = run_dir / base
         post_dir.mkdir(parents=True, exist_ok=True)
 
-        # 3. Generate every image block (hero + in-body), if enabled.
+        # 4. Generate every image block (hero + in-body), if enabled.
         image_errors: list[str] = []
         image_blocks: list[dict] = []
         hero_block = post.get("hero", {}).get("image")
@@ -167,8 +201,7 @@ def run(
             hero_block.setdefault("id", "hero")
             hero_block.setdefault("src", f"/assets/blogs/{slug}/hero.png")
             image_blocks.append({"_target": hero_block, "id": "hero",
-                                 "alt": hero_block.get("alt", ""),
-                                 "caption": ""})
+                                 "alt": hero_block.get("alt", ""), "caption": ""})
         for b in post.get("content", []):
             if b.get("type") == "image":
                 image_blocks.append({"_target": b, "id": b.get("id", "image"),
@@ -185,12 +218,11 @@ def run(
                     if "jpeg" in mime:
                         filename = filename.replace(".png", ".jpg")
                     (post_dir / filename).write_bytes(img_bytes)
-                    # JSON src uses the CMS path; preview HTML uses the filename.
                     target["src"] = f"/assets/blogs/{slug}/{filename}"
                 except Exception as exc:  # noqa: BLE001
                     image_errors.append(f"{img['id']}: {exc}")
 
-        # 4. Write all output formats.
+        # 5. Persist all output formats.
         (post_dir / "post.json").write_text(
             json.dumps(post, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -205,25 +237,24 @@ def run(
         except Exception as exc:  # noqa: BLE001
             image_errors.append(f"docx: {exc}")
 
-        # 5. Build the result record consumed by the UI.
+        # 6. Result record for the UI.
         meta = post.get("meta", {})
         seo = post.get("seo", {})
+        hero_file = (
+            f"{run_id}/{base}/hero.png" if (post_dir / "hero.png").exists()
+            else f"{run_id}/{base}/hero.jpg" if (post_dir / "hero.jpg").exists()
+            else None
+        )
         record = {
-            "index": i,
-            "keyword": keyword,
-            "slug": slug,
+            "index": i, "keyword": keyword, "slug": slug,
             "title": meta.get("title") or seo.get("title", ""),
             "subtitle": meta.get("subtitle", ""),
             "description": seo.get("description", ""),
             "tags": meta.get("tags", []),
             "category": meta.get("category", ""),
             "word_count": _word_count(post),
-            "hero_image": (
-                f"{run_id}/{base}/hero.png"
-                if (post_dir / "hero.png").exists() else
-                next((f"{run_id}/{base}/hero.jpg" for _ in [1]
-                      if (post_dir / "hero.jpg").exists()), None)
-            ),
+            "links": link_stats,
+            "hero_image": hero_file,
             "downloads": {
                 "json":     f"{run_id}/{base}/post.json",
                 "markdown": f"{run_id}/{base}/post.md",
@@ -240,6 +271,15 @@ def run(
     (run_dir / "index.json").write_text(json.dumps(results, indent=2))
     yield {"event": "done", "run_id": run_id, "count": len(results),
            "message": f"Finished {len(results)} of {len(keywords)} posts."}
+
+
+def _image_prompt(block: dict, slug: str) -> str:
+    alt = (block.get("alt") or "").strip()
+    cap = (block.get("caption") or "").strip()
+    base = alt or cap or f"hero image for an article about {slug.replace('-', ' ')}"
+    if cap and cap != alt:
+        base = f"{base}. Context: {cap}"
+    return base
 
 
 def _word_count(post: dict) -> int:
