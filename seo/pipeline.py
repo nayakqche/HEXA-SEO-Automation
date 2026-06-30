@@ -37,9 +37,13 @@ def parse_keywords(file_storage_or_text) -> list[str]:
     else:
         raw = str(file_storage_or_text)
 
+    # splitlines() handles \n, \r\n and lone \r (Excel/Mac CSVs) uniformly,
+    # so csv.reader never sees a stray newline inside a field.
+    lines = raw.splitlines()
+
     keywords: list[str] = []
     seen = set()
-    for row in csv.reader(io.StringIO(raw)):
+    for row in csv.reader(lines):
         for cell in row:
             kw = cell.strip().strip('"')
             if not kw:
