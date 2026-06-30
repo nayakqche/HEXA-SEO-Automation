@@ -25,6 +25,13 @@ def _basename(src: str) -> str:
     return os.path.basename(src) if src else ""
 
 
+def _image_exists(asset_dir: Path | None, src: str) -> bool:
+    """True if we have the actual image file in asset_dir."""
+    if not asset_dir or not src:
+        return False
+    return (asset_dir / _basename(src)).exists()
+
+
 def _esc(text: str) -> str:
     return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -137,6 +144,7 @@ _HTML_CSS = """
   body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
        max-width:780px;margin:0 auto;padding:2rem 1.25rem;color:#0f172a;line-height:1.7}
   .hero{width:100%;border-radius:14px;margin-bottom:1.25rem}
+  .hero-placeholder{margin-bottom:1.25rem}
   .subtitle{color:#475569;font-size:1.1rem;margin-top:-0.5rem}
   .byline{color:#64748b;font-size:.88rem;margin-bottom:1.25rem}
   h1{font-size:2rem;line-height:1.2;margin-bottom:.25rem}
@@ -146,9 +154,26 @@ _HTML_CSS = """
   ul,ol{padding-left:1.4rem} li{margin:.35rem 0}
   figure{margin:1.5rem 0} figure img{width:100%;border-radius:12px}
   figcaption{color:#475569;font-size:.88rem;margin-top:.4rem;text-align:center}
+  .image-placeholder{margin:1.5rem 0;padding:2rem 1.25rem;border:2px dashed #c1d0f7;
+                     border-radius:12px;background:#f4f7ff;text-align:center}
+  .image-placeholder .ip-label{font-size:.72rem;font-weight:700;color:#1d4ed8;
+                               letter-spacing:.08em;text-transform:uppercase}
+  .image-placeholder .ip-alt{color:#1e293b;margin:.4rem 0 .15rem;font-size:.95rem}
+  .image-placeholder .ip-cap{color:#475569;font-size:.85rem;font-style:italic}
   .tags{margin-top:2rem;display:flex;flex-wrap:wrap;gap:.4rem}
   .tag{font-size:.74rem;background:#e5edff;color:#1d4ed8;padding:.16rem .55rem;border-radius:999px}
 """
+
+
+def _image_placeholder_html(alt: str, caption: str = "", *, hero: bool = False) -> str:
+    label = "Hero image" if hero else "Image"
+    alt_html = f'<p class="ip-alt">{_esc(alt)}</p>' if alt else ""
+    cap_html = f'<p class="ip-cap">{_esc(caption)}</p>' if caption else ""
+    return (
+        f'<div class="image-placeholder{" hero-placeholder" if hero else ""}">'
+        f'<div class="ip-label">📷 {label} suggestion</div>'
+        f'{alt_html}{cap_html}</div>'
+    )
 
 
 def _html_with_links(text: str, links: list[dict]) -> str:
@@ -165,7 +190,7 @@ def _html_with_links(text: str, links: list[dict]) -> str:
     return "".join(parts)
 
 
-def _html_blocks(blocks: Iterable[dict]) -> list[str]:
+def _html_blocks(blocks: Iterable[dict], asset_dir: Path | None) -> list[str]:
     out: list[str] = []
     for b in blocks:
         t = b.get("type")
@@ -183,14 +208,17 @@ def _html_blocks(blocks: Iterable[dict]) -> list[str]:
             out.append(f"<{tag}>{items}</{tag}>")
         elif t == "image":
             src = _basename(b.get("src", ""))
-            alt = _esc(b.get("alt", ""))
-            cap = _esc(b.get("caption", ""))
-            cap_html = f"<figcaption>{cap}</figcaption>" if cap else ""
-            out.append(f'<figure><img src="{src}" alt="{alt}">{cap_html}</figure>')
+            alt = b.get("alt", "")
+            cap = b.get("caption", "")
+            if src and _image_exists(asset_dir, src):
+                cap_html = f"<figcaption>{_esc(cap)}</figcaption>" if cap else ""
+                out.append(f'<figure><img src="{src}" alt="{_esc(alt)}">{cap_html}</figure>')
+            else:
+                out.append(_image_placeholder_html(alt, cap))
     return out
 
 
-def render_html(post: dict) -> str:
+def render_html(post: dict, asset_dir: Path | None = None) -> str:
     meta = post.get("meta", {})
     seo = post.get("seo", {})
     hero = post.get("hero", {}).get("image", {})
@@ -198,17 +226,22 @@ def render_html(post: dict) -> str:
     title = _esc(meta.get("title") or seo.get("title", ""))
     subtitle = _esc(meta.get("subtitle", ""))
     desc = _esc(seo.get("description", ""))
-    hero_html = (
-        f'<img class="hero" src="{_basename(hero["src"])}" alt="{_esc(hero.get("alt", ""))}">'
-        if hero.get("src") else ""
-    )
+    hero_src = hero.get("src", "")
+    if hero_src and _image_exists(asset_dir, hero_src):
+        hero_html = (
+            f'<img class="hero" src="{_basename(hero_src)}" alt="{_esc(hero.get("alt", ""))}">'
+        )
+    elif hero_src or hero.get("alt"):
+        hero_html = _image_placeholder_html(hero.get("alt", ""), hero=True)
+    else:
+        hero_html = ""
     byline_bits = []
     if meta.get("author"): byline_bits.append(_esc(meta["author"]))
     if meta.get("publishedDate"): byline_bits.append(_esc(meta["publishedDate"]))
     if meta.get("readTimeMinutes"): byline_bits.append(f"{meta['readTimeMinutes']} min read")
     byline = (' <span class="byline">' + " · ".join(byline_bits) + "</span>") if byline_bits else ""
 
-    body = "\n".join(_html_blocks(post.get("content", [])))
+    body = "\n".join(_html_blocks(post.get("content", []), asset_dir))
     tags_html = ""
     if meta.get("tags"):
         chips = "".join(f'<span class="tag">{_esc(t)}</span>' for t in meta["tags"])
@@ -233,7 +266,8 @@ def render_html(post: dict) -> str:
 # ── PDF (via xhtml2pdf) ────────────────────────────────────────────────────
 
 def render_pdf(post: dict, output_path: Path, asset_dir: Path) -> None:
-    html = render_html(post)
+    """PDF render — uses the same HTML pipeline so missing images become placeholders."""
+    html = render_html(post, asset_dir=asset_dir)
 
     def link_callback(uri: str, rel: str) -> str:
         if uri.startswith(("http://", "https://", "data:")):
@@ -321,6 +355,10 @@ def render_docx(post: dict, output_path: Path, asset_dir: Path) -> None:
     hero_path = asset_dir / _basename(hero.get("src", "")) if hero.get("src") else None
     if hero_path and hero_path.exists():
         doc.add_picture(str(hero_path), width=Inches(6))
+    elif hero.get("alt"):
+        hp = doc.add_paragraph()
+        hr = hp.add_run(f"[ Hero image: {hero['alt']} ]")
+        hr.italic = True; hr.font.size = Pt(9); hr.font.color.rgb = _SLATE
 
     for block in post.get("content", []):
         bt = block.get("type")
@@ -340,10 +378,19 @@ def render_docx(post: dict, output_path: Path, asset_dir: Path) -> None:
             img_path = asset_dir / _basename(block.get("src", ""))
             if img_path.exists():
                 doc.add_picture(str(img_path), width=Inches(6))
-            if block.get("caption"):
-                cp = doc.add_paragraph()
-                cr = cp.add_run(block["caption"]); cr.italic = True
-                cr.font.size = Pt(9); cr.font.color.rgb = _SLATE
+                if block.get("caption"):
+                    cp = doc.add_paragraph()
+                    cr = cp.add_run(block["caption"]); cr.italic = True
+                    cr.font.size = Pt(9); cr.font.color.rgb = _SLATE
+            elif block.get("alt") or block.get("caption"):
+                # No image file (Gemini skipped/failed) → leave a clear marker.
+                ip = doc.add_paragraph()
+                ir = ip.add_run(f"[ Image: {block.get('alt', '')} ]")
+                ir.italic = True; ir.font.size = Pt(9); ir.font.color.rgb = _SLATE
+                if block.get("caption"):
+                    cp = doc.add_paragraph()
+                    cr = cp.add_run(block["caption"]); cr.italic = True
+                    cr.font.size = Pt(9); cr.font.color.rgb = _SLATE
 
     if meta.get("tags"):
         doc.add_paragraph()

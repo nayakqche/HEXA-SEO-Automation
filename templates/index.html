@@ -97,8 +97,14 @@
         </label>
 
         <label class="checkbox">
-          <input type="checkbox" name="make_images" id="makeImages" checked>
-          <span>Generate hero + in-body images with Gemini</span>
+          <input type="checkbox" name="make_images" id="makeImages"
+            {% if has_gemini %}checked{% else %}disabled{% endif %}>
+          <span>
+            Generate hero + in-body images with Gemini
+            {% if not has_gemini %}
+              <em class="muted">— disabled: no GEMINI_API_KEY. Blog text will still be generated with image placeholders.</em>
+            {% endif %}
+          </span>
         </label>
 
         <button type="submit" id="runBtn" class="run-btn">Generate blogs →</button>

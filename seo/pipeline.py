@@ -16,6 +16,7 @@ import csv
 import datetime as dt
 import io
 import json
+import os
 import re
 from pathlib import Path
 
@@ -127,7 +128,17 @@ def run(
     run_dir = OUTPUT_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    yield {"event": "start", "run_id": run_id, "total": len(keywords)}
+    # If Gemini isn't configured, silently disable image generation so the
+    # whole pipeline doesn't fail per-keyword. The blog still produces.
+    if make_images and not os.getenv("GEMINI_API_KEY"):
+        make_images = False
+        yield {"event": "warn", "message":
+               "GEMINI_API_KEY not set — skipping image generation. "
+               "Blog text + JSON/MD/PDF/DOCX will still be produced "
+               "with image placeholders."}
+
+    yield {"event": "start", "run_id": run_id, "total": len(keywords),
+           "make_images": make_images}
 
     # 1. Build grounding context + URL inventory.
     yield {"event": "status",
@@ -227,7 +238,9 @@ def run(
             json.dumps(post, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         (post_dir / "post.md").write_text(renderer.render_markdown(post), encoding="utf-8")
-        (post_dir / "post.html").write_text(renderer.render_html(post), encoding="utf-8")
+        (post_dir / "post.html").write_text(
+            renderer.render_html(post, asset_dir=post_dir), encoding="utf-8"
+        )
         try:
             renderer.render_pdf(post, post_dir / "post.pdf", asset_dir=post_dir)
         except Exception as exc:  # noqa: BLE001
