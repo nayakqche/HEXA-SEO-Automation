@@ -17,13 +17,25 @@ from flask import (
     stream_with_context,
 )
 
-from seo import pipeline
+from seo import db, pipeline
 from seo.scraper import fetch_logo_bytes
 
 load_dotenv()
 
 app = Flask(__name__)
 OUTPUT_DIR = Path("outputs")
+
+# ── DB availability check at startup ──────────────────────────────────────
+# Doesn't fail boot if DB is unreachable — just logs, so the app is still
+# usable for blog generation even if Postgres is down.
+if os.getenv("DATABASE_URL"):
+    if db.ping():
+        print("[db] connected to Postgres via DATABASE_URL", flush=True)
+    else:
+        print("[db] DATABASE_URL is set but connection failed — check the "
+              "Internal Database URL and that the DB is running", flush=True)
+else:
+    print("[db] DATABASE_URL not set — running without Postgres", flush=True)
 
 
 @app.route("/")
@@ -117,6 +129,18 @@ def logo():
 @app.route("/outputs/<path:filename>")
 def outputs(filename):
     return send_from_directory(OUTPUT_DIR, filename)
+
+
+@app.route("/api/health")
+def health():
+    """Quick liveness + dependency check."""
+    return jsonify({
+        "app": "ok",
+        "claude": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "gemini": bool(os.getenv("GEMINI_API_KEY")),
+        "database": ("ok" if db.ping() else "unreachable")
+                    if os.getenv("DATABASE_URL") else "not_configured",
+    })
 
 
 if __name__ == "__main__":

@@ -15,6 +15,8 @@ services:
         sync: false           # set this manually in the Render dashboard
       - key: GEMINI_API_KEY
         sync: false           # set this manually in the Render dashboard
+      - key: DATABASE_URL
+        sync: false           # paste the Internal Database URL from your Render Postgres instance
       - key: BRAND_WEBSITE
         value: https://hexaclimate.com
       - key: CLAUDE_MODEL
