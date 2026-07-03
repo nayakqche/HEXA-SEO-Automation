@@ -12,11 +12,11 @@
     <img id="brandLogo" class="logo" src="/api/logo" alt="Hexa Climate">
     <div class="topbar-title">
       <strong>SEO Blog Automation</strong>
-      <span>Grounded RAG · Claude writes · Gemini illustrates</span>
+      <span>Grounded RAG · Claude writes · Pexels illustrates</span>
     </div>
     <div class="status-chips">
       <span class="chip {{ 'ok' if has_claude else 'bad' }}">Claude {{ '✓' if has_claude else '✗ key' }}</span>
-      <span class="chip {{ 'ok' if has_gemini else 'bad' }}">Gemini {{ '✓' if has_gemini else '✗ key' }}</span>
+      <span class="chip {{ 'ok' if has_pexels else 'bad' }}">Pexels {{ '✓' if has_pexels else '✗ key' }}</span>
     </div>
   </header>
 
@@ -99,11 +99,11 @@
 
         <label class="checkbox">
           <input type="checkbox" name="make_images" id="makeImages"
-            {% if has_gemini %}checked{% else %}disabled{% endif %}>
+            {% if has_pexels %}checked{% else %}disabled{% endif %}>
           <span>
-            Generate hero + in-body images with Gemini
-            {% if not has_gemini %}
-              <em class="muted">— disabled: no GEMINI_API_KEY. Blog text will still be generated with image placeholders.</em>
+            Add stock photos from Pexels (hero + in-body)
+            {% if not has_pexels %}
+              <em class="muted">— disabled: no PEXELS_API_KEY. Blog text will still be generated with image placeholders.</em>
             {% endif %}
           </span>
         </label>

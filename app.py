@@ -44,7 +44,7 @@ def index():
         "index.html",
         brand_website=os.getenv("BRAND_WEBSITE", "https://hexaclimate.com"),
         has_claude=bool(os.getenv("ANTHROPIC_API_KEY")),
-        has_gemini=bool(os.getenv("GEMINI_API_KEY")),
+        has_pexels=bool(os.getenv("PEXELS_API_KEY")),
     )
 
 
@@ -137,7 +137,7 @@ def health():
     return jsonify({
         "app": "ok",
         "claude": bool(os.getenv("ANTHROPIC_API_KEY")),
-        "gemini": bool(os.getenv("GEMINI_API_KEY")),
+        "pexels": bool(os.getenv("PEXELS_API_KEY")),
         "database": ("ok" if db.ping() else "unreachable")
                     if os.getenv("DATABASE_URL") else "not_configured",
     })

@@ -13,16 +13,14 @@ services:
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false           # set this manually in the Render dashboard
-      - key: GEMINI_API_KEY
-        sync: false           # set this manually in the Render dashboard
+      - key: PEXELS_API_KEY
+        sync: false           # set this manually in the Render dashboard (https://www.pexels.com/api/)
       - key: DATABASE_URL
         sync: false           # paste the Internal Database URL from your Render Postgres instance
       - key: BRAND_WEBSITE
         value: https://hexaclimate.com
       - key: CLAUDE_MODEL
         value: claude-opus-4-8
-      - key: GEMINI_IMAGE_MODEL
-        value: gemini-2.5-flash-image-preview
       - key: CLAUDE_EFFORT
         value: high
       - key: MAX_CRAWL_PAGES

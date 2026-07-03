@@ -184,12 +184,12 @@ def run(
     run_dir = OUTPUT_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # If Gemini isn't configured, silently disable image generation so the
+    # If Pexels isn't configured, silently disable image lookup so the
     # whole pipeline doesn't fail per-keyword. The blog still produces.
-    if make_images and not os.getenv("GEMINI_API_KEY"):
+    if make_images and not os.getenv("PEXELS_API_KEY"):
         make_images = False
         yield {"event": "warn", "message":
-               "GEMINI_API_KEY not set — skipping image generation. "
+               "PEXELS_API_KEY not set — skipping stock photo lookup. "
                "Blog text + JSON/MD/PDF/DOCX will still be produced "
                "with image placeholders."}
 
