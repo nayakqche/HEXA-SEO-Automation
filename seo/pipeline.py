@@ -242,7 +242,7 @@ def run(
         "target_words": target_words, "make_images": make_images,
     }
 
-    concurrency = max(1, min(int(os.getenv("CONCURRENCY", "3")), 8))
+    concurrency = max(1, min(int(os.getenv("CONCURRENCY", "1")), 8))
     yield {"event": "status",
            "message": f"Writing {len(keywords)} post(s), {concurrency} at a time…"}
 
@@ -295,6 +295,10 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
     post = written["post"]
     slug = _slugify(post.get("slug") or post.get("meta", {}).get("title") or keyword)
     post["slug"] = slug
+
+    # Enforce the "exactly 2 in-body images + 1 hero" rule regardless of what
+    # Claude emitted. Extra images are stripped; if fewer, we ship whatever.
+    _cap_image_blocks(post, limit=2)
 
     link_stats = validate_and_clean_links(post, job["allow_primary"], job["allow_secondary"])
 
@@ -373,13 +377,37 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
     }
 
 
+def _cap_image_blocks(post: dict, *, limit: int = 2) -> None:
+    """Keep at most `limit` in-body image blocks; strip the rest in place."""
+    content = post.get("content", [])
+    seen = 0
+    kept: list[dict] = []
+    for b in content:
+        if b.get("type") == "image":
+            if seen >= limit:
+                continue
+            seen += 1
+        kept.append(b)
+    post["content"] = kept
+
+
+_PEXELS_STYLE_HINTS = (
+    "renewable energy, clean energy, professional photography, editorial, "
+    "sustainability, industry, real-world scene"
+)
+
+
 def _image_prompt(block: dict, slug: str) -> str:
+    """Build a Pexels-friendly query — real photographable subject + style hint."""
     alt = (block.get("alt") or "").strip()
     cap = (block.get("caption") or "").strip()
-    base = alt or cap or f"hero image for an article about {slug.replace('-', ' ')}"
-    if cap and cap != alt:
-        base = f"{base}. Context: {cap}"
-    return base
+    base = alt or cap or f"renewable energy article about {slug.replace('-', ' ')}"
+    # Strip diagram/infographic language so Pexels doesn't match irrelevant schematics.
+    base = re.sub(
+        r"\b(diagram|infographic|chart|flow(chart)?|schematic|illustration|graphic)\b",
+        "", base, flags=re.IGNORECASE,
+    ).strip(" ,.")
+    return f"{base}. {_PEXELS_STYLE_HINTS}"
 
 
 def _word_count(post: dict) -> int:

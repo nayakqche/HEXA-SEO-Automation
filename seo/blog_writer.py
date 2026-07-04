@@ -137,9 +137,21 @@ CONTENT BLOCK RULES:
 - `links` is OPTIONAL on paragraph and list blocks. Omit if no links. When
   present, each `anchor` MUST be a verbatim substring of `text` (or of one of
   the list `items`). `kind` is "internal" or "citation".
-- Include EXACTLY 2 in-body image blocks (diagram + infographic) plus the hero.
-  Image `src` MUST be `/assets/blogs/<slug>/<id>.png`. Image `alt` is the
-  Gemini prompt.
+
+IMAGE RULES (strict — we source stock photos from Pexels, not AI):
+- 1 hero image (in `hero.image`, alt = photographable subject).
+- EXACTLY 2 in-body `image` blocks — no more, no less.
+- Every image `alt` MUST describe a real, photographable subject from the
+  renewable energy space — e.g. "solar panels on a warehouse roof", "wind
+  turbines against a blue sky", "battery energy storage container at a
+  substation", "high-voltage transmission towers at sunset", "workers
+  installing rooftop solar", "electric vehicles charging", "green hydrogen
+  facility".
+- Do NOT ask for diagrams, infographics, charts, flowcharts, illustrations,
+  logos, or text-in-image. Pexels is stock photography — those returns
+  never exist. Ask for concrete physical scenes.
+- Image `src` MUST be `/assets/blogs/<slug>/<id>.png`.
+- Image `caption` is a short reader-facing line — different from `alt`.
 - Always end with a CTA heading + paragraph that contains at least one internal
   link to a Hexa contact / services page.
 
@@ -159,8 +171,15 @@ def _client() -> anthropic.Anthropic:
     return anthropic.Anthropic()
 
 
-def _extract_json(text: str) -> dict:
-    text = text.strip()
+def _extract_json(text: str, *, stop_reason: str | None = None) -> dict:
+    text = (text or "").strip()
+    if not text:
+        raise ValueError(
+            "Claude returned an empty text block"
+            + (f" (stop_reason={stop_reason}). max_tokens was exhausted by thinking "
+               "before any output was produced — raise CLAUDE_MAX_TOKENS."
+               if stop_reason == "max_tokens" else ".")
+        )
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```\s*$", "", text)
@@ -171,8 +190,20 @@ def _extract_json(text: str) -> dict:
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
-        raise ValueError(f"Couldn't find JSON in Claude response: {text[:200]}…")
-    return json.loads(text[start:end + 1])
+        raise ValueError(
+            "Claude response contained no JSON object"
+            + (" (stop_reason=max_tokens — truncated). Raise CLAUDE_MAX_TOKENS or "
+               "lower CLAUDE_EFFORT." if stop_reason == "max_tokens" else "")
+            + f". First 300 chars: {text[:300]!r}"
+        )
+    snippet = text[start:end + 1]
+    try:
+        return json.loads(snippet)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"JSON in Claude response was malformed: {exc}. "
+            f"Snippet: {snippet[:300]!r}"
+        ) from exc
 
 
 def _format_directive(fmt: str) -> str:
@@ -233,9 +264,10 @@ def write_blog(
         extra=extra,
     )
 
+    max_tokens = int(os.getenv("CLAUDE_MAX_TOKENS", "16000"))
     with client.messages.stream(
         model=model,
-        max_tokens=8000,
+        max_tokens=max_tokens,
         thinking={"type": "adaptive"},
         output_config={"effort": effort},
         system=system,
@@ -244,7 +276,8 @@ def write_blog(
         message = stream.get_final_message()
 
     raw = "".join(b.text for b in message.content if b.type == "text").strip()
-    post = _extract_json(raw)
+    stop_reason = getattr(message, "stop_reason", None)
+    post = _extract_json(raw, stop_reason=stop_reason)
 
     post.setdefault("slug", _fallback_slug(keyword))
     post.setdefault("seo", {})

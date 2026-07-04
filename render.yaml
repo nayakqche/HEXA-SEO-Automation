@@ -26,6 +26,8 @@ services:
       - key: MAX_CRAWL_PAGES
         value: "12"
       - key: CONCURRENCY
-        value: "3"          # keywords generated in parallel
+        value: "1"          # keywords generated in parallel (1 = one at a time)
+      - key: CLAUDE_MAX_TOKENS
+        value: "16000"      # room for adaptive thinking + full JSON output
       - key: PYTHON_VERSION
         value: 3.11.9

@@ -24,10 +24,22 @@ from bs4 import BeautifulSoup
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "DNT": "1",
 }
 
 _PRIORITY_HINTS = (
@@ -134,7 +146,7 @@ def _fetch_page(url: str, session: requests.Session, timeout: int = 25) -> Sourc
     body = _clean_text(soup)
     if len(body) < 80:
         return None
-    return SourcePage(url=url, title=title[:140], text=body[:8000])
+    return SourcePage(url=url, title=title[:140], text=body[:16000])
 
 
 def _crawl_site(website: str, session: requests.Session, max_pages: int) -> tuple[list[SourcePage], str | None]:
