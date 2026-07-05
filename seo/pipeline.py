@@ -92,8 +92,8 @@ def parse_keywords(file_storage_or_text) -> list[str]:
                 "and upload again."
             )
         text = raw.decode("utf-8-sig", errors="replace")
-        # Guard: if decoding produced lots of replacement chars, it's binary junk.
-        if text.count("�") > max(5, len(text) * 0.02):
+        # Guard: NUL bytes or lots of replacement chars mean binary junk.
+        if "\x00" in text or text.count("�") > max(5, len(text) * 0.02):
             raise ValueError(
                 "That file doesn't look like a CSV or Excel sheet. Upload a .csv "
                 "or .xlsx with one keyword per row, or paste keywords as text."

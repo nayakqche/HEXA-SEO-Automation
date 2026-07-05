@@ -48,6 +48,21 @@ def index():
     )
 
 
+@app.route("/api/parse-keywords", methods=["POST"])
+def parse_keywords_endpoint():
+    """Import an Excel/CSV once → return the keyword list. The frontend puts
+    it in the textarea + localStorage so it survives reloads."""
+    if "csv" not in request.files or not request.files["csv"].filename:
+        return jsonify({"error": "No file uploaded."}), 400
+    try:
+        kws = pipeline.parse_keywords(request.files["csv"])
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not kws:
+        return jsonify({"error": "No keywords found in that file."}), 400
+    return jsonify({"keywords": kws, "count": len(kws)})
+
+
 @app.route("/api/generate", methods=["POST"])
 def generate():
     """Kick off a run and stream progress as newline-delimited JSON (NDJSON)."""
@@ -76,6 +91,15 @@ def generate():
             return jsonify({"error": "No keywords found. Upload a CSV or paste "
                                      "one keyword per line."}), 400
 
+        # Batch limit: only take the first N keywords from the queue this run.
+        try:
+            limit = int(request.form.get("limit") or 2)
+        except ValueError:
+            limit = 2
+        limit = max(1, min(limit, 50))
+        queued_total = len(keywords)
+        keywords = keywords[:limit]
+
         if not os.getenv("ANTHROPIC_API_KEY"):
             return jsonify({"error": "ANTHROPIC_API_KEY is not set on the server. "
                                      "Add it in Render → Environment."}), 400
@@ -87,6 +111,14 @@ def generate():
 
     def event_stream():
         try:
+            if queued_total > len(keywords):
+                yield json.dumps({
+                    "event": "status",
+                    "message": f"Queue has {queued_total} keyword(s) — generating "
+                               f"the first {len(keywords)} this run. Completed ones "
+                               f"leave the queue automatically; click Generate again "
+                               f"for the next batch.",
+                }) + "\n"
             for event in pipeline.run(
                 keywords, website,
                 primary_urls=primary_urls,

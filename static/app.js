@@ -11,16 +11,86 @@ const cardsEl = $("#cards");
 const bar = $("#progressBar");
 const progressText = $("#progressText");
 
-// ── CSV drop zone ──
+// ── Form persistence (localStorage) — survive reloads, no re-uploading ──
+const PERSIST_FIELDS = ["website", "primary_sources", "secondary_sources",
+                        "keywords", "extra", "format", "target_words", "limit"];
+const STORE_KEY = "hexa-seo-form-v1";
+
+function saveForm() {
+  const data = {};
+  for (const name of PERSIST_FIELDS) {
+    const el = form.elements[name];
+    if (el) data[name] = el.value;
+  }
+  localStorage.setItem(STORE_KEY, JSON.stringify(data));
+  updateQueueInfo();
+}
+
+function restoreForm() {
+  let data = {};
+  try { data = JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); } catch {}
+  for (const name of PERSIST_FIELDS) {
+    const el = form.elements[name];
+    if (el && data[name] != null && data[name] !== "") el.value = data[name];
+  }
+  updateQueueInfo();
+}
+
+function queueKeywords() {
+  return $("#keywordsText").value.split("\n").map(l => l.trim()).filter(Boolean);
+}
+
+function updateQueueInfo() {
+  const n = queueKeywords().length;
+  const per = parseInt(form.elements["limit"]?.value || "2", 10) || 2;
+  const info = $("#queueInfo");
+  if (!info) return;
+  info.textContent = n
+    ? `Queue: ${n} keyword(s) — next run generates ${Math.min(per, n)}. Completed ones leave the queue automatically.`
+    : "";
+}
+
+form.addEventListener("input", saveForm);
+restoreForm();
+
+// Remove a finished keyword from the queue so the next run continues after it.
+function consumeKeyword(kw) {
+  const ta = $("#keywordsText");
+  const lines = ta.value.split("\n");
+  const idx = lines.findIndex(l => l.trim().toLowerCase() === kw.trim().toLowerCase());
+  if (idx !== -1) {
+    lines.splice(idx, 1);
+    ta.value = lines.join("\n");
+    saveForm();
+  }
+}
+
+// ── CSV/Excel drop zone → one-time import into the saved queue ──
 const dropzone = $("#dropzone");
 const csvInput = $("#csvInput");
 const csvName = $("#csvName");
 
+async function importKeywordFile(file) {
+  csvName.textContent = `Importing ${file.name}…`;
+  const fd = new FormData();
+  fd.append("csv", file);
+  try {
+    const resp = await fetch("/api/parse-keywords", { method: "POST", body: fd });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    $("#keywordsText").value = data.keywords.join("\n");
+    csvInput.value = "";           // file no longer needed — queue is the source
+    saveForm();
+    csvName.innerHTML = `Imported <strong>${data.count}</strong> keywords from ` +
+      `${file.name} — saved in your browser. No need to re-upload.`;
+  } catch (err) {
+    csvName.textContent = `Import failed: ${err.message}`;
+  }
+}
+
 $("#browseBtn").addEventListener("click", () => csvInput.click());
 csvInput.addEventListener("change", () => {
-  if (csvInput.files.length) {
-    csvName.innerHTML = `Selected: <strong>${csvInput.files[0].name}</strong>`;
-  }
+  if (csvInput.files.length) importKeywordFile(csvInput.files[0]);
 });
 ["dragover", "dragenter"].forEach((ev) =>
   dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add("drag"); })
@@ -29,10 +99,7 @@ csvInput.addEventListener("change", () => {
   dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.remove("drag"); })
 );
 dropzone.addEventListener("drop", (e) => {
-  if (e.dataTransfer.files.length) {
-    csvInput.files = e.dataTransfer.files;
-    csvName.innerHTML = `Selected: <strong>${e.dataTransfer.files[0].name}</strong>`;
-  }
+  if (e.dataTransfer.files.length) importKeywordFile(e.dataTransfer.files[0]);
 });
 
 // ── Sample CSV download ──
@@ -192,10 +259,12 @@ function handleEvent(ev) {
     case "keyword_done":
       completed = ev.done || (completed + 1); setProgress();
       log(`  ✓ [${ev.done}/${ev.total}] ${ev.title} (${ev.word_count} words)`, "l-ok");
+      consumeKeyword(ev.keyword);   // drop it from the saved queue
       renderCard(ev);
       break;
     case "keyword_error":
       completed = ev.done || (completed + 1); setProgress();
+      // Failed keywords STAY in the queue so the next run retries them.
       log(`  ✗ [${ev.done}/${ev.total}] ${ev.keyword} — ${ev.message}`, "l-err");
       break;
     case "done":

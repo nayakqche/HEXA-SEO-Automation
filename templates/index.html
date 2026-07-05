@@ -72,13 +72,14 @@
             <input type="file" id="csvInput" name="csv"
               accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
             <p><strong>Drop a CSV or Excel (.xlsx)</strong> of keywords here, or <button type="button" id="browseBtn" class="link">browse</button></p>
-            <p class="muted" id="csvName">One keyword per row (first column). <a href="#" id="sampleLink">Need a sample?</a></p>
+            <p class="muted" id="csvName">Imports once into the queue below — saved in your browser, no re-upload needed. <a href="#" id="sampleLink">Need a sample?</a></p>
           </div>
           <textarea name="keywords" id="keywordsText" rows="4"
             placeholder="…or paste keywords here, one per line:&#10;green open access for indian industries&#10;corporate ppa structures india&#10;scope 2 emissions reduction strategy"></textarea>
+          <p class="muted" id="queueInfo"></p>
         </div>
 
-        <div class="field grid-2">
+        <div class="field grid-2 grid-3">
           <label>
             <span>Format</span>
             <select name="format" id="format">
@@ -89,6 +90,10 @@
           <label>
             <span>Target words</span>
             <input type="number" name="target_words" id="targetWords" min="500" max="3000" step="100" value="1400">
+          </label>
+          <label>
+            <span>Blogs per run</span>
+            <input type="number" name="limit" id="limitInput" min="1" max="50" value="2">
           </label>
         </div>
 
