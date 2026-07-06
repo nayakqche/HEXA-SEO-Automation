@@ -13,6 +13,7 @@ Two tiers of sources:
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -59,6 +60,7 @@ class SourcePage:
     url: str
     title: str
     text: str
+    via: str = "direct"   # direct | reader proxy | archive.org snapshot
 
 
 @dataclass
@@ -125,28 +127,96 @@ def _score(url: str) -> int:
     return sum(2 for h in _PRIORITY_HINTS if h in low)
 
 
-def _fetch_page(url: str, session: requests.Session, timeout: int = 25) -> SourcePage | None:
-    # Two attempts: many gov/portal sites are slow or rate-limit the first hit.
-    r = None
-    for attempt in range(2):
-        try:
-            r = session.get(url, timeout=timeout, allow_redirects=True)
-            r.raise_for_status()
-            break
-        except requests.RequestException:
-            r = None
-            if attempt == 0:
-                time.sleep(1.0)
-    if r is None:
-        return None
-    soup = BeautifulSoup(r.text, "html.parser")
+def _page_from_html(url: str, html: str, via: str) -> SourcePage | None:
+    soup = BeautifulSoup(html, "html.parser")
+    # Strip the Wayback Machine toolbar if present so it doesn't pollute text.
+    for el in soup.find_all(id=re.compile(r"^wm-ipp")):
+        el.decompose()
     title = (soup.title.string.strip()
              if soup.title and soup.title.string
              else urlparse(url).path or url)
     body = _clean_text(soup)
     if len(body) < 80:
         return None
-    return SourcePage(url=url, title=title[:140], text=body[:16000])
+    return SourcePage(url=url, title=title[:140], text=body[:16000], via=via)
+
+
+def _fetch_direct(url: str, session: requests.Session, timeout: int) -> SourcePage | None:
+    # Two attempts: many gov/portal sites are slow or rate-limit the first hit.
+    for attempt in range(2):
+        try:
+            r = session.get(url, timeout=timeout, allow_redirects=True)
+            r.raise_for_status()
+            return _page_from_html(url, r.text, "direct")
+        except requests.RequestException:
+            if attempt == 0:
+                time.sleep(1.0)
+    return None
+
+
+def _fetch_via_reader(url: str, timeout: int = 45) -> SourcePage | None:
+    """
+    Fallback #1: Jina Reader (r.jina.ai) — a free public reader proxy that
+    fetches the page from its own infrastructure and renders JavaScript.
+    Gets through most datacenter-IP blocks AND fixes JS-only sites.
+    """
+    headers = {"Accept": "text/plain", "User-Agent": _HEADERS["User-Agent"]}
+    # Optional: a free key from https://jina.ai/reader raises the rate limit
+    # from ~20/min (per IP) to 200/min. Works fine without one.
+    jina_key = os.getenv("JINA_API_KEY")
+    if jina_key:
+        headers["Authorization"] = f"Bearer {jina_key}"
+    try:
+        r = requests.get(
+            "https://r.jina.ai/" + url,
+            headers=headers,
+            timeout=timeout,
+        )
+        if r.status_code != 200:
+            return None
+        text = r.text.strip()
+        if len(text) < 120:
+            return None
+        # Jina prefixes output with "Title: …" / "URL Source: …" lines.
+        title = urlparse(url).netloc
+        m = re.match(r"Title:\s*(.+)", text)
+        if m:
+            title = m.group(1).strip()
+        return SourcePage(url=url, title=title[:140], text=text[:16000],
+                          via="reader proxy")
+    except requests.RequestException:
+        return None
+
+
+def _fetch_via_wayback(url: str, timeout: int = 30) -> SourcePage | None:
+    """
+    Fallback #2: latest Wayback Machine snapshot. Gov portals (CEA, POSOCO,
+    MNRE) are archived frequently, and archive.org welcomes automated access.
+    """
+    try:
+        avail = requests.get(
+            "https://archive.org/wayback/available",
+            params={"url": url},
+            headers={"User-Agent": _HEADERS["User-Agent"]},
+            timeout=20,
+        ).json()
+        snap = (avail.get("archived_snapshots") or {}).get("closest") or {}
+        snap_url = snap.get("url")
+        if not snap.get("available") or not snap_url:
+            return None
+        snap_url = snap_url.replace("http://", "https://", 1)
+        r = requests.get(snap_url, headers=_HEADERS, timeout=timeout)
+        r.raise_for_status()
+        return _page_from_html(url, r.text, "archive.org snapshot")
+    except (requests.RequestException, ValueError):
+        return None
+
+
+def _fetch_page(url: str, session: requests.Session, timeout: int = 25) -> SourcePage | None:
+    """Fetch one page, falling back through reader proxy → archive snapshot."""
+    return (_fetch_direct(url, session, timeout)
+            or _fetch_via_reader(url)
+            or _fetch_via_wayback(url))
 
 
 def _crawl_site(website: str, session: requests.Session, max_pages: int) -> tuple[list[SourcePage], str | None]:
@@ -204,13 +274,20 @@ def build_context(
     session.headers.update(_HEADERS)
     ctx = GroundingContext(brand_website=brand_website.rstrip("/"))
 
-    # 1. Deep-crawl the brand site for primary context.
+    # 1. Deep-crawl the brand site for primary context. If the direct crawl
+    #    fails entirely, still try to capture the homepage via the fallbacks.
     try:
         primary, logo = _crawl_site(brand_website, session, max_pages)
         ctx.primary.extend(primary)
         ctx.logo_url = logo
     except RuntimeError as exc:
-        ctx.notes.append(f"Brand site crawl failed: {exc}")
+        home = _fetch_via_reader(brand_website) or _fetch_via_wayback(brand_website)
+        if home:
+            ctx.primary.append(home)
+            ctx.notes.append(
+                f"Brand site direct crawl failed; captured homepage via {home.via}.")
+        else:
+            ctx.notes.append(f"Brand site crawl failed: {exc}")
 
     # 2. Fetch any additional primary URLs as single pages.
     for url in primary_urls:
@@ -220,6 +297,8 @@ def build_context(
         page = _fetch_page(url, session)
         if page:
             ctx.primary.append(page)
+            if page.via != "direct":
+                ctx.notes.append(f"Primary source fetched via {page.via}: {url}")
         else:
             ctx.notes.append(f"Primary source skipped (couldn't fetch): {url}")
         time.sleep(0.3)
@@ -232,6 +311,8 @@ def build_context(
         page = _fetch_page(url, session)
         if page:
             ctx.secondary.append(page)
+            if page.via != "direct":
+                ctx.notes.append(f"Secondary source fetched via {page.via}: {url}")
         else:
             ctx.notes.append(f"Secondary source skipped (couldn't fetch): {url}")
         time.sleep(0.3)
