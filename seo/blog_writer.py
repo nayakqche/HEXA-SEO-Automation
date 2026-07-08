@@ -60,12 +60,27 @@ GROUNDING RULES — absolute:
 - Facts about Hexa: PRIMARY sources only.
 - Industry stats: only what's defensible from SECONDARY sources or general
   expertise. Never fabricate numbers, names, or quotes.
+- If a PRIMARY source contains a data table (marked "TABLE:"), you MAY reproduce
+  that real data as a `table` content block. Copy the numbers exactly; never
+  invent rows, columns, or figures that aren't in the source.
+
+UPLOADED MEDIA (user-supplied — these MUST appear in the post):
+{media_brief}
+
+WRITING STYLE — absolute:
+- Write the ENTIRE post in fluent English. The focus keyword may be given in
+  Hindi or Devanagari script; treat it purely as the topic to cover and never
+  output any Hindi word or sentence. Every heading, paragraph, list item, tag,
+  caption, and metadata field is in English.
+- NEVER use an em dash or en dash anywhere in any field. Use a comma, a colon,
+  or split into two sentences instead. This is a hard, non-negotiable rule.
+- No AI throat-clearing, no "in today's world", no filler.
 
 SEO REQUIREMENTS:
-- Focus keyword used naturally in: title, first paragraph, ≥1 H2, the meta
-  description, and the slug. No stuffing.
+- Focus keyword used naturally in: title, first paragraph, at least one H2, the
+  meta description, and the slug. No stuffing.
 - Audience: Indian C&I procurement, sustainability, and ESG decision-makers.
-- Concrete, specific, no fluff or AI throat-clearing.
+- Concrete, specific, no fluff.
 """
 
 _USER = """\
@@ -116,9 +131,13 @@ fencing. The JSON MUST match this schema exactly:
        ] }},
     {{ "id": "section-x-list-1", "type": "list", "style": "unordered",
        "items": ["...", "..."], "links": [] }},
-    {{ "id": "diagram-...", "type": "image",
-       "src": "/assets/blogs/<slug>/diagram-foo.png",
-       "alt": "Specific, literal description of the diagram (Gemini prompt)",
+    {{ "id": "section-x-table-1", "type": "table",
+       "caption": "Short caption for a REAL data table from a source",
+       "headers": ["Column A", "Column B"],
+       "rows": [["cell", "cell"], ["cell", "cell"]] }},
+    {{ "id": "section-x-image", "type": "image",
+       "src": "/assets/blogs/<slug>/section-x-image.png",
+       "alt": "Real photographable renewable-energy scene",
        "caption": "Short reader-facing caption" }},
     {{ "id": "cta-heading", "type": "heading", "level": 3, "text": "Ready to ...?" }},
     {{ "id": "cta-paragraph-1", "type": "paragraph", "text": "...",
@@ -131,12 +150,15 @@ fencing. The JSON MUST match this schema exactly:
 
 CONTENT BLOCK RULES:
 - `id` is a unique kebab-case slug per block.
-- `type` ∈ heading | paragraph | list | image.
+- `type` ∈ heading | paragraph | list | image | table.
 - `heading.level` is 2 or 3.
 - `list.style` is "unordered" or "ordered".
 - `links` is OPTIONAL on paragraph and list blocks. Omit if no links. When
   present, each `anchor` MUST be a verbatim substring of `text` (or of one of
   the list `items`). `kind` is "internal" or "citation".
+- `table` is for REAL tabular data only (from a "TABLE:" source block or an
+  uploaded table). `headers` is a list of column names, `rows` is a list of
+  equal-length string rows. Never fabricate a table from thin air.
 
 IMAGE RULES (strict — we source stock photos from Pexels, not AI):
 - 1 hero image (in `hero.image`, alt = photographable subject).
@@ -233,6 +255,7 @@ def write_blog(
     extra_instructions: str = "",
     fmt: str = "paragraph",
     target_words: int = 1400,
+    media_brief: str = "",
     model: str | None = None,
     effort: str | None = None,
 ) -> dict:
@@ -252,6 +275,7 @@ def write_blog(
                 secondary_context=secondary_context,
                 primary_inventory=primary_inventory or "(none)",
                 secondary_inventory=secondary_inventory or "(none)",
+                media_brief=media_brief or "(none uploaded — use Pexels photos only)",
             ),
             "cache_control": {"type": "ephemeral"},
         }
@@ -284,6 +308,7 @@ def write_blog(
     post.setdefault("meta", {})
     post.setdefault("hero", {})
     post.setdefault("content", [])
+    _strip_dashes(post)
 
     return {
         "post": post,
@@ -298,6 +323,35 @@ def write_blog(
 def _fallback_slug(keyword: str) -> str:
     s = re.sub(r"[^\w\s-]", "", keyword.lower()).strip()
     return re.sub(r"[\s_-]+", "-", s)[:60] or "post"
+
+
+# ── Dash sanitiser (belt-and-braces on top of the prompt rule) ─────────────
+
+# Em dash, en dash, and the horizontal-bar variants Claude sometimes reaches for.
+_DASH_RE = re.compile(r"\s*[‒–—―]\s*")
+
+
+def _clean_dashes(value: str) -> str:
+    """Replace any em/en dash with a comma-space (or a plain hyphen mid-word)."""
+    if not value or not _DASH_RE.search(value):
+        return value
+    # "word — word" → "word, word"; "12–15" → "12-15" (no surrounding spaces).
+    def repl(m: re.Match) -> str:
+        return ", " if (m.group(0) != m.group(0).strip()) else "-"
+    return _DASH_RE.sub(repl, value)
+
+
+def _strip_dashes(node):
+    """Recursively rewrite every string in the post dict/list, in place."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            node[k] = _strip_dashes(v)
+        return node
+    if isinstance(node, list):
+        return [_strip_dashes(v) for v in node]
+    if isinstance(node, str):
+        return _clean_dashes(node)
+    return node
 
 
 # ── Link validation (called from pipeline after generation) ────────────────

@@ -5,6 +5,9 @@
 outputs/*
 !outputs/.gitkeep
 
+# Uploaded resource container (ephemeral per environment)
+uploads/
+
 # Grounding cache
 .brand_cache/
 

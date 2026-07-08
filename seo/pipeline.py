@@ -17,10 +17,11 @@ import datetime as dt
 import json
 import os
 import re
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import image_gen, renderer
+from . import image_gen, renderer, uploads
 from .blog_writer import validate_and_clean_links, write_blog
 from .scraper import GroundingContext, build_context
 
@@ -232,6 +233,17 @@ def run(
     primary_text = ctx.primary_text()
     secondary_text = ctx.secondary_text()
 
+    # Fold the upload container into PRIMARY context. Uploaded text/tables become
+    # grounding material; uploaded images/tables get embedded into each post.
+    upload_text, up_images, up_tables = uploads.resource_context()
+    if upload_text:
+        primary_text += "\n" + upload_text
+    if up_images or up_tables or upload_text:
+        yield {"event": "status",
+               "message": f"Included {len(up_images)} uploaded image(s), "
+                          f"{len(up_tables)} table(s), and pasted/other files as "
+                          f"primary resources."}
+
     # Shared, read-only config passed to each worker.
     job = {
         "run_id": run_id, "run_dir": run_dir,
@@ -240,6 +252,8 @@ def run(
         "allow_primary": allow_primary, "allow_secondary": allow_secondary,
         "extra_instructions": extra_instructions, "fmt": fmt,
         "target_words": target_words, "make_images": make_images,
+        "up_images": up_images, "up_tables": up_tables,
+        "media_brief": _media_brief(up_images, up_tables),
     }
 
     concurrency = max(1, min(int(os.getenv("CONCURRENCY", "1")), 8))
@@ -290,14 +304,19 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
         job["prim_inv"], job["sec_inv"],
         extra_instructions=job["extra_instructions"],
         fmt=job["fmt"], target_words=job["target_words"],
+        media_brief=job.get("media_brief", ""),
     )
 
     post = written["post"]
     slug = _slugify(post.get("slug") or post.get("meta", {}).get("title") or keyword)
     post["slug"] = slug
 
-    # Enforce the "exactly 2 in-body images + 1 hero" rule regardless of what
-    # Claude emitted. Extra images are stripped; if fewer, we ship whatever.
+    # Guarantee every uploaded image/table is present with the real data — this
+    # runs BEFORE the image cap so uploaded images are never counted or stripped.
+    _ensure_uploaded_media(post, job.get("up_images", []), job.get("up_tables", []))
+
+    # Enforce the "exactly 2 Pexels in-body images + 1 hero" rule regardless of
+    # what Claude emitted. Uploaded images (id "upload-img-…") are exempt.
     _cap_image_blocks(post, limit=2)
 
     link_stats = validate_and_clean_links(post, job["allow_primary"], job["allow_secondary"])
@@ -306,8 +325,12 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
     post_dir = run_dir / base
     post_dir.mkdir(parents=True, exist_ok=True)
 
-    # Collect every image block (hero + in-body).
     image_errors: list[str] = []
+
+    # Copy uploaded images into the post dir (these bypass Pexels entirely).
+    _copy_uploaded_images(post, slug, post_dir, job.get("up_images", []), image_errors)
+
+    # Collect the remaining image blocks (hero + Pexels in-body) to fetch.
     image_blocks: list[dict] = []
     hero_block = post.get("hero", {}).get("image")
     if hero_block:
@@ -316,7 +339,7 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
         image_blocks.append({"_target": hero_block, "id": "hero",
                              "alt": hero_block.get("alt", ""), "caption": ""})
     for b in post.get("content", []):
-        if b.get("type") == "image":
+        if b.get("type") == "image" and not str(b.get("id", "")).startswith("upload-img-"):
             image_blocks.append({"_target": b, "id": b.get("id", "image"),
                                  "alt": b.get("alt", ""), "caption": b.get("caption", "")})
 
@@ -378,17 +401,108 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
 
 
 def _cap_image_blocks(post: dict, *, limit: int = 2) -> None:
-    """Keep at most `limit` in-body image blocks; strip the rest in place."""
+    """Keep at most `limit` Pexels in-body image blocks; strip the rest in place.
+
+    Uploaded images (id "upload-img-…") are user-supplied and always kept.
+    """
     content = post.get("content", [])
     seen = 0
     kept: list[dict] = []
     for b in content:
-        if b.get("type") == "image":
+        if b.get("type") == "image" and not str(b.get("id", "")).startswith("upload-img-"):
             if seen >= limit:
                 continue
             seen += 1
         kept.append(b)
     post["content"] = kept
+
+
+# ── Uploaded-media embedding ───────────────────────────────────────────────
+
+def _media_brief(images: list[dict], tables: list[dict]) -> str:
+    """Instruction block telling Claude exactly which uploaded media to place."""
+    if not images and not tables:
+        return ""
+    lines: list[str] = []
+    if images:
+        lines.append(
+            "UPLOADED IMAGES — add ONE image block for EACH of these using the "
+            "EXACT id shown. Write a fitting English alt and caption. These are "
+            "the user's own photos/charts/tables; do NOT send them to stock search:"
+        )
+        for im in images:
+            desc = im.get("description") or im["name"]
+            lines.append(f'  - id "upload-img-{im["id"]}"  (from {im["name"]}) : {desc}')
+    if tables:
+        lines.append(
+            "UPLOADED TABLES — reproduce each as a `table` block using the EXACT "
+            "id shown and the REAL rows from the matching UPLOADED TABLE data above. "
+            "Do not alter the numbers:"
+        )
+        for tb in tables:
+            desc = tb.get("description") or tb["name"]
+            lines.append(f'  - id "upload-table-{tb["id"]}"  (from {tb["name"]}) : {desc}')
+    return "\n".join(lines)
+
+
+def _insert_before_cta(content: list[dict], block: dict) -> None:
+    """Insert `block` just before the final heading (usually the CTA)."""
+    for idx in range(len(content) - 1, -1, -1):
+        if content[idx].get("type") == "heading":
+            content.insert(idx, block)
+            return
+    content.append(block)
+
+
+def _ensure_uploaded_media(post: dict, images: list[dict], tables: list[dict]) -> None:
+    """Guarantee every uploaded image/table appears as a block with real data."""
+    content = post.get("content", [])
+    slug = post.get("slug", "")
+
+    for tb in tables:
+        bid = f"upload-table-{tb['id']}"
+        block = next((b for b in content if b.get("id") == bid), None)
+        if block is None:
+            _insert_before_cta(content, {
+                "id": bid, "type": "table", "rows": tb["rows"],
+                "caption": tb.get("description") or tb["name"],
+            })
+        else:
+            # Override whatever Claude produced with the verified source rows.
+            block["type"] = "table"
+            block["rows"] = tb["rows"]
+            block.pop("headers", None)
+            block.setdefault("caption", tb.get("description") or tb["name"])
+
+    for im in images:
+        bid = f"upload-img-{im['id']}"
+        block = next((b for b in content if b.get("id") == bid), None)
+        if block is None:
+            _insert_before_cta(content, {
+                "id": bid, "type": "image",
+                "src": f"/assets/blogs/{slug}/{im['stored_as']}",
+                "alt": im.get("description") or im["name"],
+                "caption": im.get("description") or "",
+            })
+    post["content"] = content
+
+
+def _copy_uploaded_images(post: dict, slug: str, post_dir: Path,
+                          images: list[dict], image_errors: list[str]) -> None:
+    """Copy each uploaded image file next to the post and point its block at it."""
+    by_id = {f"upload-img-{im['id']}": im for im in images}
+    for b in post.get("content", []):
+        if b.get("type") != "image":
+            continue
+        im = by_id.get(b.get("id"))
+        if not im:
+            continue
+        src_path = uploads.stored_path(im["stored_as"])
+        if src_path.exists():
+            shutil.copyfile(src_path, post_dir / im["stored_as"])
+            b["src"] = f"/assets/blogs/{slug}/{im['stored_as']}"
+        else:
+            image_errors.append(f"upload-img-{im['id']}: stored file missing")
 
 
 _PEXELS_STYLE_HINTS = (

@@ -9,5 +9,6 @@ gunicorn>=21.2.0
 python-docx>=1.1.0
 xhtml2pdf>=0.2.13
 openpyxl>=3.1.0
+pypdf>=4.0.0
 SQLAlchemy>=2.0.0
 psycopg[binary]>=3.1.0
