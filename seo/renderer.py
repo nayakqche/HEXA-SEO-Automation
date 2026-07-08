@@ -36,6 +36,23 @@ def _esc(text: str) -> str:
     return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _table_data(block: dict) -> tuple[list[str], list[list[str]]]:
+    """Normalise a table block into (headers, rows) of plain strings.
+
+    Tolerates a missing `headers` (first row becomes the header) and pads short
+    rows so the columns always line up.
+    """
+    headers = [str(h) for h in (block.get("headers") or [])]
+    raw_rows = block.get("rows") or []
+    rows = [[("" if c is None else str(c)) for c in r] for r in raw_rows]
+    if not headers and rows:
+        headers, rows = rows[0], rows[1:]
+    width = max([len(headers)] + [len(r) for r in rows]) if (headers or rows) else 0
+    headers = headers + [""] * (width - len(headers))
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    return headers, rows
+
+
 def _link_segments(text: str, links: list[dict]):
     """
     Split `text` into a sequence of (segment_text, link_or_none) tuples,
@@ -134,6 +151,16 @@ def render_markdown(post: dict) -> str:
             if block.get("caption"):
                 lines.append(f"\n*{block['caption']}*")
             lines.append("")
+        elif t == "table":
+            headers, rows = _table_data(block)
+            if headers:
+                lines.append("| " + " | ".join(headers) + " |")
+                lines.append("| " + " | ".join("---" for _ in headers) + " |")
+            for row in rows:
+                lines.append("| " + " | ".join(row) + " |")
+            if block.get("caption"):
+                lines.append(f"\n*{block['caption']}*")
+            lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -162,6 +189,11 @@ _HTML_CSS = """
   .image-placeholder .ip-cap{color:#475569;font-size:.85rem;font-style:italic}
   .tags{margin-top:2rem;display:flex;flex-wrap:wrap;gap:.4rem}
   .tag{font-size:.74rem;background:#e5edff;color:#1d4ed8;padding:.16rem .55rem;border-radius:999px}
+  .table-wrap{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;margin:.25rem 0;font-size:.92rem}
+  th,td{border:1px solid #dbe4f5;padding:.5rem .7rem;text-align:left;vertical-align:top}
+  thead th{background:#eef2fb;color:#1e40af;font-weight:700}
+  tbody tr:nth-child(even){background:#f7f9fe}
 """
 
 
@@ -215,6 +247,16 @@ def _html_blocks(blocks: Iterable[dict], asset_dir: Path | None) -> list[str]:
                 out.append(f'<figure><img src="{src}" alt="{_esc(alt)}">{cap_html}</figure>')
             else:
                 out.append(_image_placeholder_html(alt, cap))
+        elif t == "table":
+            headers, rows = _table_data(b)
+            thead = ("<thead><tr>" + "".join(f"<th>{_esc(h)}</th>" for h in headers)
+                     + "</tr></thead>") if headers else ""
+            tbody = "<tbody>" + "".join(
+                "<tr>" + "".join(f"<td>{_esc(c)}</td>" for c in row) + "</tr>"
+                for row in rows
+            ) + "</tbody>"
+            cap_html = f"<figcaption>{_esc(b.get('caption', ''))}</figcaption>" if b.get("caption") else ""
+            out.append(f'<figure class="table-wrap"><table>{thead}{tbody}</table>{cap_html}</figure>')
     return out
 
 
@@ -383,10 +425,27 @@ def render_docx(post: dict, output_path: Path, asset_dir: Path) -> None:
                     cr = cp.add_run(block["caption"]); cr.italic = True
                     cr.font.size = Pt(9); cr.font.color.rgb = _SLATE
             elif block.get("alt") or block.get("caption"):
-                # No image file (Gemini skipped/failed) → leave a clear marker.
+                # No image file (Pexels skipped/failed) → leave a clear marker.
                 ip = doc.add_paragraph()
                 ir = ip.add_run(f"[ Image: {block.get('alt', '')} ]")
                 ir.italic = True; ir.font.size = Pt(9); ir.font.color.rgb = _SLATE
+                if block.get("caption"):
+                    cp = doc.add_paragraph()
+                    cr = cp.add_run(block["caption"]); cr.italic = True
+                    cr.font.size = Pt(9); cr.font.color.rgb = _SLATE
+        elif bt == "table":
+            headers, rows = _table_data(block)
+            all_rows = ([headers] if headers else []) + rows
+            if all_rows:
+                table = doc.add_table(rows=len(all_rows), cols=len(all_rows[0]))
+                table.style = "Light Grid Accent 1"
+                for ri, row in enumerate(all_rows):
+                    for ci, val in enumerate(row):
+                        cell = table.rows[ri].cells[ci]
+                        cell.text = val
+                        if ri == 0 and headers:
+                            for run in cell.paragraphs[0].runs:
+                                run.bold = True
                 if block.get("caption"):
                     cp = doc.add_paragraph()
                     cr = cp.add_run(block["caption"]); cr.italic = True

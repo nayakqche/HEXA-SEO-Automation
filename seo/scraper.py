@@ -94,9 +94,37 @@ class GroundingContext:
         )
 
 
+def _table_to_text(table) -> str:
+    """Flatten one <table> into pipe-separated rows so real data survives."""
+    rows_out: list[str] = []
+    for tr in table.find_all("tr"):
+        cells = tr.find_all(["th", "td"])
+        vals = [c.get_text(" ", strip=True) for c in cells]
+        if any(vals):
+            rows_out.append(" | ".join(vals))
+    return "\n".join(rows_out[:60])
+
+
+def _extract_tables(soup: BeautifulSoup) -> None:
+    """Replace each <table> with a readable TABLE: text block, in place.
+
+    get_text() alone mashes table cells into an unusable blob; converting to
+    pipe rows first keeps the numbers aligned so Claude can cite them exactly.
+    """
+    from bs4 import NavigableString
+
+    for table in soup.find_all("table"):
+        flat = _table_to_text(table)
+        if flat:
+            table.replace_with(NavigableString(f"\nTABLE:\n{flat}\n"))
+        else:
+            table.decompose()
+
+
 def _clean_text(soup: BeautifulSoup) -> str:
     for tag in soup(["script", "style", "noscript", "svg", "header", "footer", "nav"]):
         tag.decompose()
+    _extract_tables(soup)
     text = soup.get_text(separator="\n")
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     text = "\n".join(lines)

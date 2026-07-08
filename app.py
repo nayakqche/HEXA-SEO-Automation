@@ -17,7 +17,7 @@ from flask import (
     stream_with_context,
 )
 
-from seo import db, pipeline
+from seo import db, pipeline, uploads
 from seo.scraper import fetch_logo_bytes
 
 load_dotenv()
@@ -61,6 +61,45 @@ def parse_keywords_endpoint():
     if not kws:
         return jsonify({"error": "No keywords found in that file."}), 400
     return jsonify({"keywords": kws, "count": len(kws)})
+
+
+@app.route("/api/resources", methods=["GET"])
+def list_resources():
+    """Current contents of the upload container (rendered as chips in the UI)."""
+    return jsonify({"resources": uploads.list_resources()})
+
+
+@app.route("/api/upload", methods=["POST"])
+def upload_resources():
+    """Add file(s) and/or pasted text to the upload container."""
+    added = []
+    try:
+        for file in request.files.getlist("files"):
+            if file and file.filename:
+                added.append(uploads.add_file(file.filename, file.read()))
+        pasted = (request.form.get("text") or "").strip()
+        if pasted:
+            name = (request.form.get("name") or "Pasted note").strip()
+            added.append(uploads.add_pasted_text(pasted, name))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 400
+    if not added:
+        return jsonify({"error": "No files or text provided."}), 400
+    return jsonify({"added": len(added), "resources": uploads.list_resources()})
+
+
+@app.route("/api/resources/<resource_id>", methods=["DELETE"])
+def delete_resource(resource_id):
+    """Remove a single resource from the container."""
+    uploads.remove(resource_id)
+    return jsonify({"resources": uploads.list_resources()})
+
+
+@app.route("/api/clear-resources", methods=["POST"])
+def clear_resources():
+    """Empty the whole container so a fresh batch of resources can be uploaded."""
+    uploads.clear()
+    return jsonify({"resources": []})
 
 
 @app.route("/api/generate", methods=["POST"])

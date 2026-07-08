@@ -17,6 +17,7 @@
     <div class="status-chips">
       <span class="chip {{ 'ok' if has_claude else 'bad' }}">Claude {{ '✓' if has_claude else '✗ key' }}</span>
       <span class="chip {{ 'ok' if has_pexels else 'bad' }}">Pexels {{ '✓' if has_pexels else '✗ key' }}</span>
+      <button type="button" id="themeToggle" class="theme-btn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
     </div>
   </header>
 
@@ -65,6 +66,27 @@
           </div>
         </div>
 
+        <!-- ────── Resource container ────── -->
+        <div class="field">
+          <div class="source-head">
+            <span class="badge primary">Resource container</span>
+            <span class="muted">Files here are treated as PRIMARY material — images &amp; tables get kept in the blog</span>
+          </div>
+          <div id="resDropzone" class="dropzone">
+            <input type="file" id="resInput" multiple hidden
+              accept=".txt,.md,.json,.csv,.xlsx,.pdf,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.webm">
+            <p><strong>Drop files</strong> (txt, json, csv, xlsx, pdf, doc, png, jpg, mp4…) or
+              <button type="button" id="resBrowse" class="link">browse</button></p>
+            <p class="muted">Uploaded images, charts, and tables are kept in the generated blog. Video is stored for reference.</p>
+          </div>
+          <textarea id="resPaste" rows="2" placeholder="…or paste text/notes/data to include as a primary resource, then click Add"></textarea>
+          <div class="res-actions">
+            <button type="button" id="resAddText" class="link">+ Add pasted text</button>
+            <button type="button" id="resClear" class="clear-btn" hidden>Clear all resources</button>
+          </div>
+          <div id="resList" class="res-list"></div>
+        </div>
+
         <!-- ────── Keywords ────── -->
         <div class="field">
           <span>Keywords</span>
@@ -77,6 +99,12 @@
           <textarea name="keywords" id="keywordsText" rows="4"
             placeholder="…or paste keywords here, one per line:&#10;green open access for indian industries&#10;corporate ppa structures india&#10;scope 2 emissions reduction strategy"></textarea>
           <p class="muted" id="queueInfo"></p>
+          <div class="kw-legend">
+            <span class="kw-status used">✓ used</span>
+            <span class="kw-status pending">✗ not used</span>
+            <span class="muted">Hindi keywords are allowed — the blog is always written in English.</span>
+          </div>
+          <div id="keywordBlocks" class="kw-blocks"></div>
         </div>
 
         <div class="field grid-2 grid-3">
@@ -122,6 +150,7 @@
         <h2>Run progress</h2>
         <div class="progress"><div class="bar" id="progressBar"></div></div>
         <span id="progressText" class="muted"></span>
+        <button type="button" id="clearBlogs" class="clear-btn" hidden>Clear saved blogs</button>
       </div>
       <div id="log" class="log"></div>
       <div id="cards" class="cards"></div>
