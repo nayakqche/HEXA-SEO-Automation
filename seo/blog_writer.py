@@ -228,21 +228,55 @@ def _extract_json(text: str, *, stop_reason: str | None = None) -> dict:
         ) from exc
 
 
-def _format_directive(fmt: str) -> str:
-    f = (fmt or "paragraph").lower()
-    if f == "listicle":
-        return (
-            "LISTICLE — short, scannable, list-driven. Use H2s like "
-            "\"1. <Point Title>\", \"2. <Point Title>\". Each numbered point "
-            "has a brief paragraph plus an unordered list of 3–5 bullets. "
-            "Aim for 6–10 numbered points. Keep paragraphs ≤3 sentences."
-        )
-    return (
-        "PARAGRAPH (long-form) — traditional flowing prose with clear H2 "
-        "sections and H3 sub-sections. Use lists sparingly (1–3 across the "
+_FORMAT_DIRECTIVES = {
+    "paragraph": (
+        "PARAGRAPH (long-form): traditional flowing prose with clear H2 "
+        "sections and H3 sub-sections. Use lists sparingly (1 to 3 across the "
         "whole post) to break up dense topics. Substantive paragraphs of "
-        "3–6 sentences each."
-    )
+        "3 to 6 sentences each."
+    ),
+    "listicle": (
+        "LISTICLE: short, scannable, list-driven. Use H2s like "
+        "\"1. <Point Title>\", \"2. <Point Title>\". Each numbered point "
+        "has a brief paragraph plus an unordered list of 3 to 5 bullets. "
+        "Aim for 6 to 10 numbered points. Keep paragraphs to 3 sentences or less."
+    ),
+    "data": (
+        "DATA-INTENSIVE / ANALYTICAL: lead with figures. Include at least one "
+        "`table` block built ONLY from real numbers that appear in the sources "
+        "(capacity, tariffs, emissions, year-on-year changes). Never invent a "
+        "figure. Interpret the numbers in prose so a procurement lead can act "
+        "on them, and cite the source for every stat."
+    ),
+    "hexa-update": (
+        "HEXA DEVELOPMENTS UPDATE: cover ONLY Hexa Climate's own projects, "
+        "milestones, announcements, partnerships, and capabilities, drawn "
+        "strictly from the PRIMARY sources. Do not pad with generic industry "
+        "background. If the primary sources do not support a detail, leave it "
+        "out rather than inventing it. Write it as an authoritative company update."
+    ),
+    "how-to": (
+        "HOW-TO GUIDE: practical and step-driven. Use an ordered list for the "
+        "core steps, each with a short paragraph of context. Make it directly "
+        "actionable for a C&I procurement or sustainability lead."
+    ),
+    "thought-leadership": (
+        "THOUGHT LEADERSHIP: a confident expert point of view on where the "
+        "market is heading. Prose-led with one clear argument, backed by cited "
+        "statistics. No hedging, no filler."
+    ),
+    "comparison": (
+        "COMPARISON: weigh the main options or approaches side by side. Include "
+        "a `table` block comparing them on real criteria, then prose that "
+        "interprets the trade-offs for Indian C&I buyers. Use only facts the "
+        "sources support."
+    ),
+}
+
+
+def _format_directive(fmt: str) -> str:
+    return _FORMAT_DIRECTIVES.get((fmt or "paragraph").lower(),
+                                  _FORMAT_DIRECTIVES["paragraph"])
 
 
 def write_blog(
