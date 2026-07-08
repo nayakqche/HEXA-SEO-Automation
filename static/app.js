@@ -111,23 +111,60 @@ function updateQueueInfo() {
     : (masterKeywords().length ? "All keywords used. Add more, or remove a chip to re-queue it." : "");
 }
 
+// Map each keyword (lowercased) to the blog made for it, numbered in the order
+// blogs were generated so the table can show "#N · Preview".
+function blogsByKeyword() {
+  const map = {};
+  loadBlogs().forEach((rec, i) => {
+    if (rec.keyword) map[rec.keyword.toLowerCase()] = { serial: i + 1, rec };
+  });
+  return map;
+}
+
 function renderKeywordBlocks() {
-  const wrap = $("#keywordBlocks");
-  if (!wrap) return;
+  const box = $("#keywordBox");
+  if (!box) return;
   const status = loadStatus();
-  wrap.innerHTML = "";
-  for (const kw of masterKeywords()) {
+  const blogs = blogsByKeyword();
+  const kws = masterKeywords();
+  if (!kws.length) { box.innerHTML = ""; return; }
+
+  const table = document.createElement("table");
+  table.className = "kw-table";
+  table.innerHTML =
+    `<thead><tr><th>#</th><th>Keyword</th><th>Status</th><th>Blog</th><th></th></tr></thead>`;
+  const tbody = document.createElement("tbody");
+
+  kws.forEach((kw, i) => {
     const used = status[kw.toLowerCase()] === "used";
-    const chip = document.createElement("span");
-    chip.className = "kw-chip " + (used ? "used" : "pending");
-    chip.innerHTML =
-      `<span class="st">${used ? "✓" : "✗"}</span>` +
-      `<span class="txt"></span>` +
-      `<button type="button" class="x" title="Remove keyword">×</button>`;
-    chip.querySelector(".txt").textContent = kw;
-    chip.querySelector(".x").addEventListener("click", () => removeKeyword(kw));
-    wrap.appendChild(chip);
-  }
+    const hit = blogs[kw.toLowerCase()];
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="num">${i + 1}</td>` +
+      `<td class="kw-name"></td>` +
+      `<td class="st-cell"><span class="st ${used ? "used" : "pending"}">${used ? "✓ used" : "✗ not used"}</span></td>` +
+      `<td class="blog-cell"></td>` +
+      `<td class="act-cell"><button type="button" class="rm" title="Remove keyword">×</button></td>`;
+    tr.querySelector(".kw-name").textContent = kw;
+    const blogCell = tr.querySelector(".blog-cell");
+    if (hit && hit.rec.downloads && hit.rec.downloads.html) {
+      const a = document.createElement("a");
+      a.className = "blog-link";
+      a.href = "/outputs/" + hit.rec.downloads.html;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = `#${hit.serial} Preview ↗`;
+      blogCell.appendChild(a);
+    } else {
+      blogCell.innerHTML = `<span class="muted">—</span>`;
+    }
+    tr.querySelector(".rm").addEventListener("click", () => removeKeyword(kw));
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  box.innerHTML = "";
+  box.appendChild(table);
 }
 
 form.addEventListener("input", saveForm);
@@ -149,6 +186,7 @@ function addBlog(rec) {
 $("#clearBlogs").addEventListener("click", () => {
   saveBlogs([]);
   cardsEl.innerHTML = "";
+  renderKeywordBlocks();   // drop the blog links from the table too
 });
 
 // ── Resource container ───────────────────────────────────────────────────────
@@ -450,8 +488,8 @@ function handleEvent(ev) {
     case "keyword_done":
       completed = ev.done || (completed + 1); setProgress();
       log(`  ✓ [${ev.done}/${ev.total}] ${ev.title} (${ev.word_count} words)`, "l-ok");
-      markUsed(ev.keyword);   // mark it used (stays visible, turns green ✓)
-      addBlog(ev);            // persist so it survives a reload
+      addBlog(ev);            // persist first so its link is ready for the table
+      markUsed(ev.keyword);   // mark used (turns green ✓, adds the blog link)
       renderCard(ev);
       break;
     case "keyword_error":
