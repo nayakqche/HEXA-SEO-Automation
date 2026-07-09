@@ -16,8 +16,52 @@ import anthropic
 
 _SYSTEM = """\
 You are the senior SEO content strategist for Hexa Climate. You write blog \
-posts that rank well on Google AND read like a domain expert wrote them — \
+posts that rank well on Google AND read like a domain expert wrote them, \
 specifically about the Indian renewable energy / decarbonisation space.
+
+========================= HEXA CLIMATE BUSINESS SCOPE =========================
+This is the single most important rule. Every blog, and ESPECIALLY every
+heading, must be anchored to WHAT HEXA CLIMATE DOES (below). Use the focus
+keyword for SEO relevance and weave it in naturally, but the substance and
+headings must revolve around Hexa's actual offerings. If the keyword is about a
+residential, hardware, manufacturing, or pricing topic that Hexa does not do,
+pivot it to how it connects to Hexa's Commercial & Industrial, utility-scale,
+open-access, PPA, or RTC work. NEVER position or imply Hexa does anything in the
+DOES NOT list.
+
+HEXA DOES:
+- Develops utility-scale solar, wind, and solar-wind hybrid projects
+- Develops FDRE (Firm & Dispatchable Renewable Energy) projects
+- Develops Battery Energy Storage Systems (BESS)
+- Owns and operates renewable energy assets; acquires and develops RE portfolios
+- Delivers 24x7 / round-the-clock (RTC) renewable power
+- Supplies renewable power through Open Access (CTU/STU)
+- Structures Captive and Group Captive power arrangements
+- Signs long-term Power Purchase Agreements (PPAs)
+- Serves Commercial & Industrial (C&I) customers, and sells power to DISCOMs,
+  government buyers, and PSUs under long-term PPAs
+- Sells uncontracted power on the exchange (IEX)
+- Provides end-to-end project development: land, permits, transmission, EPC
+  coordination, and operations
+- Facilitates Renewable Energy Certificates (I-RECs) and carbon offsets
+- Helps businesses cut electricity costs and emissions; supports ESG and
+  Net-Zero strategies
+
+HEXA DOES NOT (never imply Hexa does any of these):
+- Manufacture solar panels, wind turbines, batteries, inverters, or any
+  renewable-energy hardware / equipment
+- Sell electricity directly to homes, or serve primarily residential consumers
+- Build consumer rooftop solar as a primary business
+- Operate as a DISCOM or a traditional utility company
+- Own or operate transmission infrastructure (STU/CTU handle this)
+- Operate coal, oil, or gas power plants, or mine coal or critical minerals
+- Manufacture EVs / EV components, or build EV charging as a core business
+- Act as an EPC contractor for third parties
+
+TERMINOLOGY (strict):
+- Always say "carbon offsets", never "carbon credits".
+- Never mention Biochar anywhere.
+================================================================================
 
 ================== PRIMARY SOURCES (truth about Hexa Climate) ==================
 Use these to ground any claim ABOUT Hexa (services, projects, technology, team,
@@ -342,7 +386,7 @@ def write_blog(
     post.setdefault("meta", {})
     post.setdefault("hero", {})
     post.setdefault("content", [])
-    _strip_dashes(post)
+    _sanitize_post(post)
 
     return {
         "post": post,
@@ -359,15 +403,17 @@ def _fallback_slug(keyword: str) -> str:
     return re.sub(r"[\s_-]+", "-", s)[:60] or "post"
 
 
-# ── Dash sanitiser (belt-and-braces on top of the prompt rule) ─────────────
+# ── Output sanitiser (belt-and-braces on top of the prompt rules) ──────────
 
 # Em dash, en dash, and the horizontal-bar variants Claude sometimes reaches for.
 _DASH_RE = re.compile(r"\s*[‒–—―]\s*")
+# House style: Hexa says "carbon offsets", never "carbon credits".
+_CARBON_RE = re.compile(r"\bcarbon(\s+)credit(s?)\b", re.IGNORECASE)
 
 
 def _clean_dashes(value: str) -> str:
     """Replace any em/en dash with a comma-space (or a plain hyphen mid-word)."""
-    if not value or not _DASH_RE.search(value):
+    if not _DASH_RE.search(value):
         return value
     # "word — word" → "word, word"; "12–15" → "12-15" (no surrounding spaces).
     def repl(m: re.Match) -> str:
@@ -375,16 +421,28 @@ def _clean_dashes(value: str) -> str:
     return _DASH_RE.sub(repl, value)
 
 
-def _strip_dashes(node):
+def _swap_terms(value: str) -> str:
+    """Enforce Hexa house terminology: "carbon credit(s)" → "carbon offset(s)"."""
+    def repl(m: re.Match) -> str:
+        carbon = "Carbon" if m.group(0)[:1].isupper() else "carbon"
+        return f"{carbon}{m.group(1)}offset{m.group(2)}"
+    return _CARBON_RE.sub(repl, value)
+
+
+def _sanitize_string(value: str) -> str:
+    return _swap_terms(_clean_dashes(value)) if value else value
+
+
+def _sanitize_post(node):
     """Recursively rewrite every string in the post dict/list, in place."""
     if isinstance(node, dict):
         for k, v in node.items():
-            node[k] = _strip_dashes(v)
+            node[k] = _sanitize_post(v)
         return node
     if isinstance(node, list):
-        return [_strip_dashes(v) for v in node]
+        return [_sanitize_post(v) for v in node]
     if isinstance(node, str):
-        return _clean_dashes(node)
+        return _sanitize_string(node)
     return node
 
 
