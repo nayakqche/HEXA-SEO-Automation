@@ -253,6 +253,7 @@ a { color: var(--green); }
 .kw-table td.num { color: var(--muted); width: 46px; }
 .kw-table td.st-cell { width: 92px; }
 .kw-table td.act-cell { width: 34px; text-align: center; }
+.kw-table .st { cursor: pointer; user-select: none; }
 .kw-table .st.used { color: #15803d; font-weight: 700; }
 .kw-table .st.pending { color: #c2410c; font-weight: 700; }
 .kw-table .blog-link { color: var(--green); font-weight: 600; text-decoration: none; white-space: nowrap; }

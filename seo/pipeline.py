@@ -311,9 +311,12 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
     slug = _slugify(post.get("slug") or post.get("meta", {}).get("title") or keyword)
     post["slug"] = slug
 
-    # Guarantee every uploaded image/table is present with the real data — this
-    # runs BEFORE the image cap so uploaded images are never counted or stripped.
+    # Guarantee every uploaded image/table is present with the real data. Runs
+    # BEFORE the cap so uploaded images are never counted or stripped.
     _ensure_uploaded_media(post, job.get("up_images", []), job.get("up_tables", []))
+
+    # Never repeat the same table, image, paragraph, or list within one post.
+    _dedupe_content(post)
 
     # Enforce the "exactly 2 Pexels in-body images + 1 hero" rule regardless of
     # what Claude emitted. Uploaded images (id "upload-img-…") are exempt.
@@ -420,28 +423,24 @@ def _cap_image_blocks(post: dict, *, limit: int = 2) -> None:
 # ── Uploaded-media embedding ───────────────────────────────────────────────
 
 def _media_brief(images: list[dict], tables: list[dict]) -> str:
-    """Instruction block telling Claude exactly which uploaded media to place."""
+    """Tell Claude uploaded media is placed by the system, so it never duplicates it."""
     if not images and not tables:
         return ""
-    lines: list[str] = []
+    lines: list[str] = [
+        "The user uploaded the media below. The SYSTEM inserts each item into the "
+        "post automatically, exactly once, with the correct data. Do NOT create "
+        "image or table blocks for them yourself, and do NOT restate their data in "
+        "another table or list. You may refer to them in prose (for example \"the "
+        "table below\" or \"the chart shown\") but never reproduce their contents."
+    ]
     if images:
-        lines.append(
-            "UPLOADED IMAGES — add ONE image block for EACH of these using the "
-            "EXACT id shown. Write a fitting English alt and caption. These are "
-            "the user's own photos/charts/tables; do NOT send them to stock search:"
-        )
+        lines.append("Uploaded images (placed automatically):")
         for im in images:
-            desc = im.get("description") or im["name"]
-            lines.append(f'  - id "upload-img-{im["id"]}"  (from {im["name"]}) : {desc}')
+            lines.append(f"  - {im.get('description') or 'an uploaded image'}")
     if tables:
-        lines.append(
-            "UPLOADED TABLES — reproduce each as a `table` block using the EXACT "
-            "id shown and the REAL rows from the matching UPLOADED TABLE data above. "
-            "Do not alter the numbers:"
-        )
+        lines.append("Uploaded data tables (placed automatically):")
         for tb in tables:
-            desc = tb.get("description") or tb["name"]
-            lines.append(f'  - id "upload-table-{tb["id"]}"  (from {tb["name"]}) : {desc}')
+            lines.append(f"  - {tb.get('description') or 'an uploaded data table'}")
     return "\n".join(lines)
 
 
@@ -455,36 +454,72 @@ def _insert_before_cta(content: list[dict], block: dict) -> None:
 
 
 def _ensure_uploaded_media(post: dict, images: list[dict], tables: list[dict]) -> None:
-    """Guarantee every uploaded image/table appears as a block with real data."""
-    content = post.get("content", [])
+    """Insert each uploaded image/table exactly once, with verified data.
+
+    The pipeline owns placement (Claude is told not to recreate them). Any block
+    the model may still have produced for these ids is dropped first so nothing
+    is duplicated, and captions never leak the raw filename.
+    """
     slug = post.get("slug", "")
+    up_ids = ({f"upload-table-{t['id']}" for t in tables}
+              | {f"upload-img-{i['id']}" for i in images})
+    content = [b for b in post.get("content", []) if b.get("id") not in up_ids]
 
     for tb in tables:
-        bid = f"upload-table-{tb['id']}"
-        block = next((b for b in content if b.get("id") == bid), None)
-        if block is None:
-            _insert_before_cta(content, {
-                "id": bid, "type": "table", "rows": tb["rows"],
-                "caption": tb.get("description") or tb["name"],
-            })
-        else:
-            # Override whatever Claude produced with the verified source rows.
-            block["type"] = "table"
-            block["rows"] = tb["rows"]
-            block.pop("headers", None)
-            block.setdefault("caption", tb.get("description") or tb["name"])
-
+        _insert_before_cta(content, {
+            "id": f"upload-table-{tb['id']}", "type": "table",
+            "rows": tb["rows"],
+            "caption": (tb.get("description") or "").strip(),
+        })
     for im in images:
-        bid = f"upload-img-{im['id']}"
-        block = next((b for b in content if b.get("id") == bid), None)
-        if block is None:
-            _insert_before_cta(content, {
-                "id": bid, "type": "image",
-                "src": f"/assets/blogs/{slug}/{im['stored_as']}",
-                "alt": im.get("description") or im["name"],
-                "caption": im.get("description") or "",
-            })
+        _insert_before_cta(content, {
+            "id": f"upload-img-{im['id']}", "type": "image",
+            "src": f"/assets/blogs/{slug}/{im['stored_as']}",
+            "alt": (im.get("description") or "Renewable energy visual from Hexa Climate").strip(),
+            "caption": (im.get("description") or "").strip(),
+        })
     post["content"] = content
+
+
+# ── De-duplication (no repeated tables, images, paragraphs, or lists) ──────
+
+def _norm(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+def _block_signature(block: dict):
+    """A hashable identity for a block, or None if it shouldn't be de-duped."""
+    t = block.get("type")
+    if t == "paragraph":
+        s = _norm(block.get("text", ""))
+        return ("paragraph", s) if s else None
+    if t == "heading":
+        s = _norm(block.get("text", ""))
+        return ("heading", block.get("level", 2), s) if s else None
+    if t == "list":
+        items = tuple(_norm(i) for i in block.get("items", []))
+        return ("list", items) if any(items) else None
+    if t == "image":
+        key = _norm(block.get("src", "")) or _norm(block.get("alt", ""))
+        return ("image", key) if key else None
+    if t == "table":
+        rows = tuple(tuple(str(c) for c in r) for r in block.get("rows", []))
+        return ("table", rows) if rows else None
+    return None
+
+
+def _dedupe_content(post: dict) -> None:
+    """Drop any block whose content repeats one already kept earlier in the post."""
+    seen: set = set()
+    kept: list[dict] = []
+    for block in post.get("content", []):
+        sig = _block_signature(block)
+        if sig is not None and sig in seen:
+            continue
+        if sig is not None:
+            seen.add(sig)
+        kept.append(block)
+    post["content"] = kept
 
 
 def _copy_uploaded_images(post: dict, slug: str, post_dir: Path,

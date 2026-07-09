@@ -92,6 +92,17 @@ function markUsed(kw) {
   updateQueueInfo();
 }
 
+// Click a status cell to flip it: used → not used (re-queues it) and back.
+function toggleStatus(kw) {
+  const status = loadStatus();
+  const key = kw.trim().toLowerCase();
+  if (status[key] === "used") delete status[key];
+  else status[key] = "used";
+  saveStatus(status);
+  renderKeywordBlocks();
+  updateQueueInfo();
+}
+
 function removeKeyword(kw) {
   const ta = $("#keywordsText");
   ta.value = ta.value.split("\n").filter((l) => l.trim().toLowerCase() !== kw.toLowerCase()).join("\n");
@@ -142,10 +153,11 @@ function renderKeywordBlocks() {
     tr.innerHTML =
       `<td class="num">${i + 1}</td>` +
       `<td class="kw-name"></td>` +
-      `<td class="st-cell"><span class="st ${used ? "used" : "pending"}">${used ? "✓ used" : "✗ not used"}</span></td>` +
+      `<td class="st-cell"><span class="st ${used ? "used" : "pending"}" title="Click to toggle used / not used">${used ? "✓ used" : "✗ not used"}</span></td>` +
       `<td class="blog-cell"></td>` +
       `<td class="act-cell"><button type="button" class="rm" title="Remove keyword">×</button></td>`;
     tr.querySelector(".kw-name").textContent = kw;
+    tr.querySelector(".st").addEventListener("click", () => toggleStatus(kw));
     const blogCell = tr.querySelector(".blog-cell");
     if (hit && hit.rec.downloads && hit.rec.downloads.html) {
       const a = document.createElement("a");
