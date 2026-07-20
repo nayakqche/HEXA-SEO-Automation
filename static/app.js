@@ -155,9 +155,13 @@ function renderKeywordBlocks() {
       `<td class="kw-name"></td>` +
       `<td class="st-cell"><span class="st ${used ? "used" : "pending"}" title="Click to toggle used / not used">${used ? "✓ used" : "✗ not used"}</span></td>` +
       `<td class="blog-cell"></td>` +
-      `<td class="act-cell"><button type="button" class="rm" title="Remove keyword">×</button></td>`;
+      `<td class="act-cell">` +
+        `<button type="button" class="regen" title="Regenerate a fresh, different version">↻</button>` +
+        `<button type="button" class="rm" title="Remove keyword">×</button>` +
+      `</td>`;
     tr.querySelector(".kw-name").textContent = kw;
     tr.querySelector(".st").addEventListener("click", () => toggleStatus(kw));
+    tr.querySelector(".regen").addEventListener("click", () => regenerateKeyword(kw));
     const blogCell = tr.querySelector(".blog-cell");
     if (hit && hit.rec.downloads && hit.rec.downloads.html) {
       const a = document.createElement("a");
@@ -194,6 +198,14 @@ function addBlog(rec) {
   list.push(rec);
   saveBlogs(list);
 }
+// Replace the stored blog for a keyword (used when regenerating).
+function replaceBlog(rec) {
+  const key = (rec.keyword || "").toLowerCase();
+  const list = loadBlogs().filter((b) => (b.keyword || "").toLowerCase() !== key);
+  list.push(rec);
+  saveBlogs(list);
+}
+const cssEscape = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/"/g, '\\"');
 
 $("#clearBlogs").addEventListener("click", () => {
   saveBlogs([]);
@@ -358,6 +370,7 @@ function setProgress() {
 function renderCard(rec) {
   const card = document.createElement("div");
   card.className = "card";
+  card.dataset.keyword = (rec.keyword || "").toLowerCase();
   const img = rec.hero_image
     ? `<img class="thumb" src="/outputs/${rec.hero_image}" alt="" onerror="this.style.display='none'">`
     : `<div class="thumb placeholder">${(rec.image_errors && rec.image_errors.length) ? "image gen failed" : "no image"}</div>`;
@@ -420,24 +433,46 @@ function restoreBlogs() {
 }
 
 // ── Run ──
-form.addEventListener("submit", async (e) => {
+let isRegen = false;   // true while a single-keyword regeneration is streaming
+
+form.addEventListener("submit", (e) => {
   e.preventDefault();
   const pending = pendingKeywords();
   if (!pending.length) {
-    alert("No unused keywords to generate. Add keywords, or remove a chip to re-queue it.");
+    alert("No unused keywords to generate. Add keywords, or click a green ✓ used to re-queue one.");
     return;
   }
+  runGeneration(pending);
+});
+
+// Regenerate a fresh, different version of one keyword (works even if used).
+function regenerateKeyword(kw) {
+  if (runBtn.disabled) return;   // a run is already in progress
+  const hit = blogsByKeyword()[kw.toLowerCase()];
+  const avoid = hit && hit.rec
+    ? [hit.rec.title, hit.rec.subtitle].filter(Boolean).join(" | ") : "";
+  runGeneration([kw], { regenerate: true, avoid });
+}
+
+async function runGeneration(keywordList, opts = {}) {
+  if (!keywordList.length) return;
+  isRegen = !!opts.regenerate;
   runBtn.disabled = true;
   runBtn.textContent = "Working…";
   runPanel.hidden = false;
   logEl.innerHTML = "";
   total = 0; completed = 0; setProgress();
   runPanel.scrollIntoView({ behavior: "smooth" });
+  if (isRegen) log(`↻ Regenerating a fresh version of: ${keywordList[0]}`, "l-dim");
 
   const fd = new FormData(form);
-  // Only send keywords that haven't been used yet; the server takes the first N.
-  fd.set("keywords", pending.join("\n"));
+  fd.set("keywords", keywordList.join("\n"));
   fd.set("make_images", $("#makeImages").checked ? "true" : "false");
+  if (opts.regenerate) {
+    fd.set("regenerate", "1");
+    fd.set("limit", String(keywordList.length));
+    if (opts.avoid) fd.set("avoid", opts.avoid);
+  }
 
   let resp;
   try {
@@ -473,10 +508,11 @@ form.addEventListener("submit", async (e) => {
   reset();
 
   function reset() {
+    isRegen = false;
     runBtn.disabled = false;
     runBtn.textContent = "Generate blogs →";
   }
-});
+}
 
 function handleEvent(ev) {
   switch (ev.event) {
@@ -500,8 +536,15 @@ function handleEvent(ev) {
     case "keyword_done":
       completed = ev.done || (completed + 1); setProgress();
       log(`  ✓ [${ev.done}/${ev.total}] ${ev.title} (${ev.word_count} words)`, "l-ok");
-      addBlog(ev);            // persist first so its link is ready for the table
-      markUsed(ev.keyword);   // mark used (turns green ✓, adds the blog link)
+      if (isRegen) {
+        replaceBlog(ev);       // swap the prior version for this keyword
+        const old = cardsEl.querySelector(
+          `.card[data-keyword="${cssEscape((ev.keyword || "").toLowerCase())}"]`);
+        if (old) old.remove();
+      } else {
+        addBlog(ev);           // persist first so its link is ready for the table
+      }
+      markUsed(ev.keyword);    // mark used (turns green ✓, refreshes the blog link)
       renderCard(ev);
       break;
     case "keyword_error":

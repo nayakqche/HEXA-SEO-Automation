@@ -110,6 +110,21 @@ def generate():
                    os.getenv("BRAND_WEBSITE", "https://hexaclimate.com")).strip()
         extra = (request.form.get("extra") or "").strip()
         make_images = request.form.get("make_images", "true") != "false"
+
+        # Regeneration: force a fresh, different take on the same keyword. The
+        # client passes the previous title/headings so we can steer away from them.
+        if request.form.get("regenerate") == "1":
+            avoid = (request.form.get("avoid") or "").strip()
+            variation = (
+                "REGENERATION REQUEST: produce a substantially DIFFERENT article "
+                "from any previous version of this keyword. Use a fresh angle, a "
+                "different structure and section order, different headings, a "
+                "different title and slug, and different examples and phrasing."
+            )
+            if avoid:
+                variation += (" Do NOT reuse or lightly reword these previous "
+                              f"titles/headings: {avoid}")
+            extra = (extra + "\n" + variation).strip() if extra else variation
         max_pages = int(os.getenv("MAX_CRAWL_PAGES", "12"))
 
         primary_urls = pipeline.parse_urls(request.form.get("primary_sources", ""))

@@ -318,9 +318,10 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
     # Never repeat the same table, image, paragraph, or list within one post.
     _dedupe_content(post)
 
-    # Enforce the "exactly 2 Pexels in-body images + 1 hero" rule regardless of
-    # what Claude emitted. Uploaded images (id "upload-img-…") are exempt.
-    _cap_image_blocks(post, limit=2)
+    # Cap Pexels in-body images. Listicles get one per point; other formats
+    # keep 2. Uploaded images (id "upload-img-…") are exempt from the cap.
+    img_limit = 10 if job.get("fmt") == "listicle" else 2
+    _cap_image_blocks(post, limit=img_limit)
 
     link_stats = validate_and_clean_links(post, job["allow_primary"], job["allow_secondary"])
 
@@ -500,8 +501,10 @@ def _block_signature(block: dict):
         items = tuple(_norm(i) for i in block.get("items", []))
         return ("list", items) if any(items) else None
     if t == "image":
-        key = _norm(block.get("src", "")) or _norm(block.get("alt", ""))
-        return ("image", key) if key else None
+        # Dedupe only true repeats (same picture AND same alt), so distinct
+        # per-point listicle images that share a placeholder src are all kept.
+        key = _norm(block.get("src", "")) + "|" + _norm(block.get("alt", ""))
+        return ("image", key) if key.strip("|") else None
     if t == "table":
         rows = tuple(tuple(str(c) for c in r) for r in block.get("rows", []))
         return ("table", rows) if rows else None
