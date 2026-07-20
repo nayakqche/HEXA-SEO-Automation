@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Edit blog · HEXA Climate</title>
+  <link rel="icon" href="{{ url_for('static', filename='logo.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='editor.css') }}">
+</head>
+<body>
+  <header class="topbar edit-topbar">
+    <button id="backBtn" class="btn ghost" type="button">← Back</button>
+    <div class="topbar-title">
+      <strong>Blog editor</strong>
+      <span id="slugLabel" class="muted"></span>
+    </div>
+    <div class="edit-actions">
+      <span id="saveState" class="muted"></span>
+      <button id="themeToggle" class="theme-btn" type="button" title="Toggle dark mode">🌙</button>
+      <div class="dl-menu">
+        <button id="dlBtn" class="btn" type="button">Download ▾</button>
+        <div id="dlList" class="dl-list" hidden>
+          <a data-f="json">JSON</a>
+          <a data-f="md">Markdown</a>
+          <a data-f="html" target="_blank">HTML preview</a>
+          <a data-f="pdf">PDF</a>
+          <a data-f="docx">Word (DOCX)</a>
+        </div>
+      </div>
+      <button id="saveBtn" class="btn primary" type="button">Save</button>
+    </div>
+  </header>
+
+  <!-- Floating formatting toolbar: select text in any paragraph/list item -->
+  <div id="fmtToolbar" class="fmt-toolbar">
+    <button type="button" data-cmd="bold" title="Bold"><b>B</b></button>
+    <button type="button" data-cmd="italic" title="Italic"><i>I</i></button>
+    <button type="button" id="linkBtn" title="Add link">🔗 Link</button>
+    <button type="button" id="unlinkBtn" title="Remove link">⛒ Unlink</button>
+    <span class="muted hint">Select text in a paragraph or list, then click Bold / Italic / Link.</span>
+  </div>
+
+  <main class="wrap editor-wrap">
+    <section class="panel">
+      <h2>Post details</h2>
+      <label class="ed-field"><span>Title</span>
+        <input type="text" id="metaTitle"></label>
+      <label class="ed-field"><span>Subtitle</span>
+        <input type="text" id="metaSubtitle"></label>
+      <div class="ed-row">
+        <label class="ed-field"><span>Category</span>
+          <input type="text" id="metaCategory"></label>
+        <label class="ed-field"><span>Tags <em>(comma separated)</em></span>
+          <input type="text" id="metaTags"></label>
+      </div>
+      <label class="ed-field"><span>Meta description (SEO)</span>
+        <textarea id="seoDesc" rows="2"></textarea></label>
+
+      <div class="hero-edit">
+        <span class="ed-label">Hero image</span>
+        <div class="hero-row">
+          <img id="heroPreview" class="hero-thumb" alt="">
+          <div class="hero-fields">
+            <button type="button" id="heroReplace" class="btn small">Replace image…</button>
+            <input type="file" id="heroFile" accept="image/*" hidden>
+            <input type="text" id="heroAlt" placeholder="Hero alt text">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Content</h2>
+      <div id="blocks"></div>
+      <div class="add-bar">
+        <span class="muted">Add:</span>
+        <button type="button" class="btn small" data-add="paragraph">+ Paragraph</button>
+        <button type="button" class="btn small" data-add="heading">+ Heading</button>
+        <button type="button" class="btn small" data-add="list">+ List</button>
+        <button type="button" class="btn small" data-add="image">+ Image</button>
+        <button type="button" class="btn small" data-add="table">+ Table</button>
+        <button type="button" class="btn small alt" id="pasteWordBtn">📋 Paste from Word</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Paste-from-Word modal -->
+  <div id="pasteModal" class="modal" hidden>
+    <div class="modal-box">
+      <h3>Paste from Word / Google Docs</h3>
+      <p class="muted">Click the box below and paste (Ctrl/Cmd + V). Formatting,
+        lists, and tables come across as-is and are added to the end of the post.</p>
+      <div id="pasteCatch" class="paste-catch" contenteditable="true"
+           data-placeholder="Paste your content here…"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" id="pasteCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>window.__REL__ = {{ rel|tojson }};</script>
+  <script src="{{ url_for('static', filename='editor.js') }}"></script>
+</body>
+</html>

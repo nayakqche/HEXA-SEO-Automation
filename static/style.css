@@ -167,6 +167,8 @@ a { color: var(--green); }
 .dl-doc { background: #eef4ff; color: #1e40af; border-color: #c7d6f4; }
 .dl-html { background: transparent; border-color: var(--line); color: var(--muted); }
 .dl-html:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
+.dl-edit { background: #ecfdf3; color: #15803d; border-color: #bbf7d0; }
+.dl-edit:hover { background: #15803d; color: #fff; border-color: #15803d; }
 
 .card .subtitle { font-size: .88rem; color: var(--muted); margin: .15rem 0 .4rem; font-style: italic; }
 .meta-line.err { color: var(--bad); }
