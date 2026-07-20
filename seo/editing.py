@@ -165,11 +165,19 @@ def sanitize_post(post: dict) -> dict:
 
 
 def safe_post_dir(rel: str) -> Path:
-    """Resolve outputs/<rel> and confirm it is a real post directory."""
+    """Resolve outputs/<rel> and confirm it is a real post directory.
+
+    If the files were wiped by a server restart, restore them from durable
+    storage first so preview/edit keep working across deploys.
+    """
+    from . import store
+
     base = OUTPUT_DIR.resolve()
     target = (OUTPUT_DIR / (rel or "")).resolve()
     if target != base and base not in target.parents:
         raise ValueError("Path is outside the outputs directory.")
+    if not (target / "post.json").exists():
+        store.restore_dir(rel, target)
     if not (target / "post.json").exists():
         raise ValueError("No editable post was found at that location.")
     return target
@@ -191,6 +199,8 @@ def save_post(rel: str, post: dict) -> dict:
         renderer.render_html(post, asset_dir=post_dir), encoding="utf-8")
     renderer.render_pdf(post, post_dir / "post.pdf", asset_dir=post_dir)
     renderer.render_docx(post, post_dir / "post.docx", asset_dir=post_dir)
+    from . import store
+    store.save_dir(rel, post_dir)   # persist the edit so downloads stay in sync
     return post
 
 
@@ -199,4 +209,6 @@ def save_asset(rel: str, filename: str, data: bytes) -> str:
     post_dir = safe_post_dir(rel)
     safe = re.sub(r"[^\w.\-]+", "_", filename or "image")[:80] or "image"
     (post_dir / safe).write_bytes(data)
+    from . import store
+    store.save_dir(rel, post_dir)   # mirror the new asset into durable storage
     return safe

@@ -17,7 +17,9 @@ from flask import (
     stream_with_context,
 )
 
-from seo import db, editing, pipeline, uploads
+import mimetypes
+
+from seo import db, editing, pipeline, store, uploads
 from seo.scraper import fetch_logo_bytes
 
 load_dotenv()
@@ -214,7 +216,15 @@ def logo():
 
 @app.route("/outputs/<path:filename>")
 def outputs(filename):
-    return send_from_directory(OUTPUT_DIR, filename)
+    if (OUTPUT_DIR / filename).exists():
+        return send_from_directory(OUTPUT_DIR, filename)
+    # Disk miss (ephemeral restart): fall back to durable storage if available.
+    rel, _, name = filename.rpartition("/")
+    data = store.get_file(rel, name)
+    if data is not None:
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        return Response(data, mimetype=mime)
+    return ("Not found", 404)
 
 
 @app.route("/edit/<path:rel>")

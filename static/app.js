@@ -371,8 +371,11 @@ function renderCard(rec) {
   const card = document.createElement("div");
   card.className = "card";
   card.dataset.keyword = (rec.keyword || "").toLowerCase();
+  // The thumb is always a fixed cell so the card keeps its 2-column layout even
+  // when the hero image is missing (e.g. files cleared on a server restart).
   const img = rec.hero_image
-    ? `<img class="thumb" src="/outputs/${rec.hero_image}" alt="" onerror="this.style.display='none'">`
+    ? `<div class="thumb"><img src="/outputs/${rec.hero_image}" alt=""
+         onerror="const t=this.closest('.thumb'); t.classList.add('placeholder'); t.textContent='image unavailable';"></div>`
     : `<div class="thumb placeholder">${(rec.image_errors && rec.image_errors.length) ? "image gen failed" : "no image"}</div>`;
   const tags = (rec.tags || []).map(() => `<span class="tag"></span>`).join("");
   const cache = rec.usage && rec.usage.cache_read
