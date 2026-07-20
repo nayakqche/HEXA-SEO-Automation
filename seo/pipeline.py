@@ -21,7 +21,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import image_gen, renderer, uploads
+from . import image_gen, renderer, store, uploads
 from .blog_writer import validate_and_clean_links, write_blog
 from .scraper import GroundingContext, build_context
 
@@ -374,6 +374,10 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
         renderer.render_docx(post, post_dir / "post.docx", asset_dir=post_dir)
     except Exception as exc:  # noqa: BLE001
         image_errors.append(f"docx: {exc}")
+
+    # Mirror the finished post into durable storage so preview/edit/download
+    # survive a server restart (no-op when DATABASE_URL is unset).
+    store.save_dir(f"{run_id}/{base}", post_dir)
 
     meta = post.get("meta", {})
     seo = post.get("seo", {})
