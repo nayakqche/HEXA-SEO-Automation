@@ -10,6 +10,7 @@ renderer turns those into real inline hyperlinks in every format.
 from __future__ import annotations
 
 import os
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable
 
@@ -51,6 +52,68 @@ def _table_data(block: dict) -> tuple[list[str], list[list[str]]]:
     headers = headers + [""] * (width - len(headers))
     rows = [r + [""] * (width - len(r)) for r in rows]
     return headers, rows
+
+
+# ── Inline rich text (from the CMS editor: bold / italic / links) ──────────
+# Edited paragraphs and list items may carry an `html` string with a small,
+# already-sanitised set of inline tags. We parse it once into flat segments and
+# reuse that for Markdown, DOCX, and word counting. HTML output uses it as-is.
+
+class _InlineParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.segments: list[dict] = []
+        self._bold = 0
+        self._italic = 0
+        self._href: str | None = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("b", "strong"):
+            self._bold += 1
+        elif tag in ("i", "em"):
+            self._italic += 1
+        elif tag == "a":
+            self._href = dict(attrs).get("href")
+        elif tag == "br":
+            self.segments.append({"text": "\n", "bold": False, "italic": False, "href": None})
+
+    def handle_endtag(self, tag):
+        if tag in ("b", "strong"):
+            self._bold = max(0, self._bold - 1)
+        elif tag in ("i", "em"):
+            self._italic = max(0, self._italic - 1)
+        elif tag == "a":
+            self._href = None
+
+    def handle_data(self, data):
+        if data:
+            self.segments.append({"text": data, "bold": self._bold > 0,
+                                  "italic": self._italic > 0, "href": self._href})
+
+
+def _parse_inline(html: str) -> list[dict]:
+    p = _InlineParser()
+    p.feed(html or "")
+    return p.segments
+
+
+def _inline_html_to_text(html: str) -> str:
+    return "".join(s["text"] for s in _parse_inline(html)).strip()
+
+
+def _inline_html_to_md(html: str) -> str:
+    out = []
+    for s in _parse_inline(html):
+        core = s["text"]
+        if core.strip():
+            if s["bold"]:
+                core = f"**{core}**"
+            if s["italic"]:
+                core = f"_{core}_"
+            if s["href"]:
+                core = f"[{core}]({s['href']})"
+        out.append(core)
+    return "".join(out)
 
 
 def _link_segments(text: str, links: list[dict]):
@@ -139,15 +202,26 @@ def render_markdown(post: dict) -> str:
             lines.append("#" * level + " " + block.get("text", ""))
             lines.append("")
         elif t == "paragraph":
-            lines.append(_md_with_links(block.get("text", ""), links))
+            if block.get("html"):
+                lines.append(_inline_html_to_md(block["html"]))
+            else:
+                lines.append(_md_with_links(block.get("text", ""), links))
             lines.append("")
         elif t == "list":
             marker = (lambda i: f"{i + 1}.") if block.get("style") == "ordered" else (lambda i: "-")
-            for i, item in enumerate(block.get("items", [])):
-                lines.append(f"{marker(i)} {_md_with_links(item, links)}")
+            items_html = block.get("itemsHtml")
+            if items_html:
+                for i, item in enumerate(items_html):
+                    lines.append(f"{marker(i)} {_inline_html_to_md(item)}")
+            else:
+                for i, item in enumerate(block.get("items", [])):
+                    lines.append(f"{marker(i)} {_md_with_links(item, links)}")
             lines.append("")
         elif t == "image":
-            lines.append(f"![{block.get('alt', '')}]({_basename(block.get('src', ''))})")
+            img_md = f"![{block.get('alt', '')}]({_basename(block.get('src', ''))})"
+            if block.get("href"):
+                img_md = f"[{img_md}]({block['href']})"
+            lines.append(img_md)
             if block.get("caption"):
                 lines.append(f"\n*{block['caption']}*")
             lines.append("")
@@ -231,20 +305,30 @@ def _html_blocks(blocks: Iterable[dict], asset_dir: Path | None) -> list[str]:
             lvl = max(2, min(6, int(b.get("level", 2))))
             out.append(f"<h{lvl}>{_esc(b.get('text', ''))}</h{lvl}>")
         elif t == "paragraph":
-            out.append(f"<p>{_html_with_links(b.get('text', ''), links)}</p>")
+            # Edited paragraphs carry sanitised inline html; use it verbatim.
+            body = b["html"] if b.get("html") else _html_with_links(b.get("text", ""), links)
+            out.append(f"<p>{body}</p>")
         elif t == "list":
             tag = "ol" if b.get("style") == "ordered" else "ul"
-            items = "".join(
-                f"<li>{_html_with_links(it, links)}</li>" for it in b.get("items", [])
-            )
+            items_html = b.get("itemsHtml")
+            if items_html:
+                items = "".join(f"<li>{it}</li>" for it in items_html)
+            else:
+                items = "".join(
+                    f"<li>{_html_with_links(it, links)}</li>" for it in b.get("items", [])
+                )
             out.append(f"<{tag}>{items}</{tag}>")
         elif t == "image":
             src = _basename(b.get("src", ""))
             alt = b.get("alt", "")
             cap = b.get("caption", "")
+            href = b.get("href", "")
             if src and _image_exists(asset_dir, src):
                 cap_html = f"<figcaption>{_esc(cap)}</figcaption>" if cap else ""
-                out.append(f'<figure><img src="{src}" alt="{_esc(alt)}">{cap_html}</figure>')
+                img = f'<img src="{src}" alt="{_esc(alt)}">'
+                if href:
+                    img = f'<a href="{_esc(href)}" target="_blank" rel="noopener">{img}</a>'
+                out.append(f"<figure>{img}{cap_html}</figure>")
             else:
                 out.append(_image_placeholder_html(alt, cap))
         elif t == "table":
@@ -369,6 +453,22 @@ def _write_paragraph_with_links(paragraph, text: str, links: list[dict]) -> None
             _add_text_run(paragraph, seg)
 
 
+def _write_inline_html(paragraph, html: str) -> None:
+    """Render sanitised inline html (bold/italic/link) as Word runs."""
+    for s in _parse_inline(html):
+        if not s["text"]:
+            continue
+        if s["href"]:
+            _add_hyperlink(paragraph, s["href"], s["text"])
+        else:
+            r = paragraph.add_run(s["text"])
+            r.font.size = Pt(11)
+            if s["bold"]:
+                r.bold = True
+            if s["italic"]:
+                r.italic = True
+
+
 def render_docx(post: dict, output_path: Path, asset_dir: Path) -> None:
     meta = post.get("meta", {})
     seo = post.get("seo", {})
@@ -410,12 +510,21 @@ def render_docx(post: dict, output_path: Path, asset_dir: Path) -> None:
             doc.add_heading(block.get("text", ""), level=lvl)
         elif bt == "paragraph":
             p = doc.add_paragraph()
-            _write_paragraph_with_links(p, block.get("text", ""), links)
+            if block.get("html"):
+                _write_inline_html(p, block["html"])
+            else:
+                _write_paragraph_with_links(p, block.get("text", ""), links)
         elif bt == "list":
             style = "List Number" if block.get("style") == "ordered" else "List Bullet"
-            for item in block.get("items", []):
-                p = doc.add_paragraph(style=style)
-                _write_paragraph_with_links(p, item, links)
+            items_html = block.get("itemsHtml")
+            if items_html:
+                for item in items_html:
+                    p = doc.add_paragraph(style=style)
+                    _write_inline_html(p, item)
+            else:
+                for item in block.get("items", []):
+                    p = doc.add_paragraph(style=style)
+                    _write_paragraph_with_links(p, item, links)
         elif bt == "image":
             img_path = asset_dir / _basename(block.get("src", ""))
             if img_path.exists():

@@ -17,7 +17,7 @@ from flask import (
     stream_with_context,
 )
 
-from seo import db, pipeline, uploads
+from seo import db, editing, pipeline, uploads
 from seo.scraper import fetch_logo_bytes
 
 load_dotenv()
@@ -200,6 +200,50 @@ def logo():
 @app.route("/outputs/<path:filename>")
 def outputs(filename):
     return send_from_directory(OUTPUT_DIR, filename)
+
+
+@app.route("/edit/<path:rel>")
+def edit_page(rel):
+    """CMS-style editor for one generated post (rel = <run-id>/<NNN-slug>)."""
+    try:
+        editing.safe_post_dir(rel)
+    except ValueError:
+        return "No editable post found here.", 404
+    return render_template("editor.html", rel=rel)
+
+
+@app.route("/api/edit/<path:rel>", methods=["GET", "POST"])
+def edit_api(rel):
+    """GET the post JSON, or POST an edited version to re-render all formats."""
+    if request.method == "GET":
+        try:
+            return jsonify({"post": editing.load_post(rel)})
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 404
+    payload = request.get_json(silent=True) or {}
+    post = payload.get("post")
+    if not isinstance(post, dict):
+        return jsonify({"error": "Missing post payload."}), 400
+    try:
+        saved = editing.save_post(rel, post)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 500
+    return jsonify({"ok": True, "post": saved})
+
+
+@app.route("/api/edit-asset/<path:rel>", methods=["POST"])
+def edit_asset(rel):
+    """Upload/replace an image inside a post; returns its stored filename."""
+    if "file" not in request.files or not request.files["file"].filename:
+        return jsonify({"error": "No image uploaded."}), 400
+    f = request.files["file"]
+    try:
+        name = editing.save_asset(rel, f.filename, f.read())
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"filename": name})
 
 
 @app.route("/api/health")

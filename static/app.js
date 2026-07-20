@@ -366,12 +366,14 @@ function renderCard(rec) {
     ? ` · ${rec.usage.cache_read.toLocaleString()} cached tokens` : "";
 
   const dl = rec.downloads || {};
+  const editRel = (dl.json || "").replace(/\/post\.json$/, "");
   const downloadLinks = `
     <a class="dl dl-json" href="/outputs/${dl.json}" download>JSON</a>
     <a class="dl dl-md"   href="/outputs/${dl.markdown}" download>MD</a>
     <a class="dl dl-pdf"  href="/outputs/${dl.pdf}" download>PDF</a>
     <a class="dl dl-doc"  href="/outputs/${dl.docx}" download>DOCX</a>
     <a class="dl dl-html" href="/outputs/${dl.html}" target="_blank">Preview ↗</a>
+    ${editRel ? `<a class="dl dl-edit" href="/edit/${editRel}" target="_blank">✎ Edit</a>` : ""}
   `;
 
   const imgErr = rec.image_errors && rec.image_errors.length
