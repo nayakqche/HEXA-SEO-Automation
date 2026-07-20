@@ -27,17 +27,31 @@ load_dotenv()
 app = Flask(__name__)
 OUTPUT_DIR = Path("outputs")
 
-# ── DB availability check at startup ──────────────────────────────────────
-# Doesn't fail boot if DB is unreachable — just logs, so the app is still
-# usable for blog generation even if Postgres is down.
+# ── DB availability + startup restore ─────────────────────────────────────
+# Neon can be slow to wake, so we do the restore in a background thread and
+# never block boot. Preview / edit / download will fall back to the DB per
+# request until the restore finishes, then be served straight from disk.
 if os.getenv("DATABASE_URL"):
     if db.ping():
         print("[db] connected to Postgres via DATABASE_URL", flush=True)
     else:
         print("[db] DATABASE_URL is set but connection failed — check the "
-              "Internal Database URL and that the DB is running", flush=True)
+              "URL and that the DB is running", flush=True)
+
+    import threading as _threading
+
+    def _startup_restore() -> None:
+        try:
+            store.restore_all_to_disk(OUTPUT_DIR)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[store] startup restore failed: {exc}", flush=True)
+
+    _threading.Thread(target=_startup_restore, daemon=True,
+                      name="store-restore").start()
 else:
-    print("[db] DATABASE_URL not set — running without Postgres", flush=True)
+    print("[db] DATABASE_URL not set — running without Postgres. Posts will "
+          "vanish on restart. Attach a Postgres URL to make them durable.",
+          flush=True)
 
 
 @app.route("/")
@@ -224,7 +238,7 @@ def outputs(filename):
     if data is not None:
         mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
         return Response(data, mimetype=mime)
-    return ("Not found", 404)
+    return _gone_page(rel, "download"), 404
 
 
 @app.route("/edit/<path:rel>")
@@ -233,8 +247,20 @@ def edit_page(rel):
     try:
         editing.safe_post_dir(rel)
     except ValueError:
-        return "No editable post found here.", 404
+        return _gone_page(rel, "editor"), 404
     return render_template("editor.html", rel=rel)
+
+
+def _gone_page(rel: str, kind: str) -> str:
+    """Friendly 'this post is gone' page with a Regenerate hint.
+
+    A post ends up here when it was generated before durable storage was
+    active and its ephemeral disk copy has been wiped by a server restart.
+    """
+    slug = rel.rsplit("/", 1)[-1] if rel else ""
+    keyword = slug.split("-", 1)[-1].replace("-", " ") if "-" in slug else slug
+    return render_template("gone.html", rel=rel, keyword=keyword, kind=kind,
+                           persisted=store.enabled())
 
 
 @app.route("/api/edit/<path:rel>", methods=["GET", "POST"])
@@ -273,13 +299,14 @@ def edit_asset(rel):
 
 @app.route("/api/health")
 def health():
-    """Quick liveness + dependency check."""
+    """Liveness + real DB write check (proves persistence actually works)."""
     return jsonify({
         "app": "ok",
         "claude": bool(os.getenv("ANTHROPIC_API_KEY")),
         "pexels": bool(os.getenv("PEXELS_API_KEY")),
         "database": ("ok" if db.ping() else "unreachable")
                     if os.getenv("DATABASE_URL") else "not_configured",
+        "persistence": store.health(),
     })
 
 

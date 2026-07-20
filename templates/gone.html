@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blog files unavailable · HEXA Climate</title>
+  <link rel="icon" href="{{ url_for('static', filename='logo.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <img class="logo" src="/api/logo" alt="Hexa Climate">
+    <div class="topbar-title">
+      <strong>Blog files unavailable</strong>
+      <span class="muted">This post's files aren't reachable on this server</span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="panel">
+      <h1>This blog's files aren't here anymore</h1>
+      <p class="lede">
+        You tried to open the <strong>{{ kind }}</strong> for
+        <code>{{ rel }}</code>, but no files exist for this post on the current
+        server. The card in your dashboard is saved in your browser, so the link
+        stays around, but the files behind it are gone.
+      </p>
+
+      <h2>Why does this happen?</h2>
+      <p>
+        Render's web disk is <em>ephemeral</em>: every deploy or idle restart
+        wipes the <code>outputs/</code> folder. Any blog generated
+        <strong>before durable storage was turned on</strong> only lived on
+        that disk, so once it's wiped there is no way to recover it.
+      </p>
+
+      {% if persisted %}
+      <p>
+        Durable storage <strong>is now active</strong>, so any blog you
+        generate from here on will survive restarts. The one below was made
+        before that, which is why it's gone.
+      </p>
+      {% else %}
+      <p class="muted">
+        Persistence is not currently active on this server. Set the
+        <code>DATABASE_URL</code> environment variable in Render to make future
+        blogs durable.
+      </p>
+      {% endif %}
+
+      <h2>What to do</h2>
+      <p>
+        Head back to the dashboard, find <strong>“{{ keyword }}”</strong> in
+        your keyword table, and click the <strong>↻ regenerate</strong> button
+        next to it. The new version will be saved permanently and its Preview /
+        Edit / Download links will keep working after any future restart.
+      </p>
+
+      <p>
+        <a class="run-btn" href="/">← Back to the dashboard</a>
+      </p>
+    </section>
+  </main>
+</body>
+</html>
