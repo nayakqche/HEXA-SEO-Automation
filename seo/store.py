@@ -45,11 +45,16 @@ def _init() -> None:
 
 
 def save_dir(rel: str, dir_path: Path) -> None:
-    """Mirror every file in a post directory into the database (upsert)."""
+    """Mirror every file in a post directory into the database (upsert).
+
+    Failures are logged loudly (with a stack trace) so a silently broken
+    persistence path is impossible to miss in the Render logs.
+    """
     if not enabled():
         return
     try:
         _init()
+        saved = 0
         with db.session() as s:
             for f in sorted(Path(dir_path).iterdir()):
                 if not f.is_file():
@@ -60,8 +65,71 @@ def save_dir(rel: str, dir_path: Path) -> None:
                     "ON CONFLICT (rel, name) DO UPDATE SET "
                     "content = EXCLUDED.content, updated = now()"
                 ), {"rel": rel, "name": f.name, "content": f.read_bytes()})
+                saved += 1
+        print(f"[store] saved {saved} file(s) for {rel}", flush=True)
     except Exception as exc:  # noqa: BLE001 — durability is best-effort
-        print(f"[store] save failed for {rel}: {exc}", flush=True)
+        import traceback as _tb
+        print(f"[store] SAVE FAILED for {rel}: {type(exc).__name__}: {exc}\n"
+              + _tb.format_exc(), flush=True)
+
+
+def list_rels() -> list[str]:
+    """Distinct post rels currently in durable storage."""
+    if not enabled():
+        return []
+    try:
+        _init()
+        with db.session() as s:
+            rows = s.execute(text("SELECT DISTINCT rel FROM post_files")).all()
+        return [r[0] for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        print(f"[store] list_rels failed: {exc}", flush=True)
+        return []
+
+
+def restore_all_to_disk(base: Path | None = None) -> int:
+    """Restore every stored post back to disk. Runs at boot, safe to re-run.
+
+    Skips posts that already have post.json on disk, so an already-warm
+    container doesn't waste cycles reading the same rows again.
+    """
+    if not enabled():
+        return 0
+    base = Path(base or OUTPUT_DIR)
+    restored = 0
+    for rel in list_rels():
+        target = base / rel
+        if (target / "post.json").exists():
+            continue
+        if restore_dir(rel, target):
+            restored += 1
+    if restored:
+        print(f"[store] restored {restored} post(s) from durable storage on boot",
+              flush=True)
+    return restored
+
+
+def health() -> dict:
+    """Prove the write path works: write and delete a probe row."""
+    if not enabled():
+        return {"enabled": False}
+    try:
+        _init()
+        with db.session() as s:
+            s.execute(text(
+                "INSERT INTO post_files (rel, name, content, updated) "
+                "VALUES ('__probe__', 'ping', :b, now()) "
+                "ON CONFLICT (rel, name) DO UPDATE SET updated = now()"
+            ), {"b": b"ok"})
+            row = s.execute(text(
+                "SELECT content FROM post_files WHERE rel = '__probe__' AND name = 'ping'"
+            )).first()
+            s.execute(text("DELETE FROM post_files WHERE rel = '__probe__'"))
+        stored = len(list_rels())
+        return {"enabled": True, "write": bool(row and bytes(row[0]) == b"ok"),
+                "posts_stored": stored}
+    except Exception as exc:  # noqa: BLE001
+        return {"enabled": True, "write": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def get_file(rel: str, name: str) -> bytes | None:
