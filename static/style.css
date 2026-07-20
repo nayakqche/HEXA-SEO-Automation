@@ -252,7 +252,12 @@ a { color: var(--green); }
 }
 .kw-table td.num { color: var(--muted); width: 46px; }
 .kw-table td.st-cell { width: 92px; }
-.kw-table td.act-cell { width: 34px; text-align: center; }
+.kw-table td.act-cell { width: 64px; text-align: center; white-space: nowrap; }
+.kw-table .regen {
+  border: none; background: none; color: var(--green); cursor: pointer;
+  font-size: 1rem; line-height: 1; margin-right: .25rem;
+}
+.kw-table .regen:hover { color: var(--green-bright); }
 .kw-table .st { cursor: pointer; user-select: none; }
 .kw-table .st.used { color: #15803d; font-weight: 700; }
 .kw-table .st.pending { color: #c2410c; font-weight: 700; }

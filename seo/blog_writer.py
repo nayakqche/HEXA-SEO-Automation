@@ -206,7 +206,7 @@ CONTENT BLOCK RULES:
 
 IMAGE RULES (strict — we source stock photos from Pexels, not AI):
 - 1 hero image (in `hero.image`, alt = photographable subject).
-- EXACTLY 2 in-body `image` blocks — no more, no less.
+- {image_directive}
 - Every image `alt` MUST describe a real, photographable subject from the
   renewable energy space — e.g. "solar panels on a warehouse roof", "wind
   turbines against a blue sky", "battery energy storage container at a
@@ -323,6 +323,22 @@ def _format_directive(fmt: str) -> str:
                                   _FORMAT_DIRECTIVES["paragraph"])
 
 
+def _image_directive(fmt: str) -> str:
+    """How many in-body images to request, by format.
+
+    Listicles get one image per numbered point (in addition to the hero) so
+    every item is illustrated; other formats keep the tight 2-image rule.
+    """
+    if (fmt or "").lower() == "listicle":
+        return (
+            "Add ONE in-body `image` block for EACH numbered point (so 6 to 10 "
+            "in-body images, one per point), placed right after that point's "
+            "text. Give each a DIFFERENT photographable subject so no two images "
+            "repeat."
+        )
+    return "Add EXACTLY 2 in-body `image` blocks, no more and no less."
+
+
 def write_blog(
     keyword: str,
     primary_context: str,
@@ -362,6 +378,7 @@ def write_blog(
     user = _USER.format(
         keyword=keyword, today=today,
         format_directive=_format_directive(fmt),
+        image_directive=_image_directive(fmt),
         target_words=target_words, min_words=min_w, max_words=max_w,
         extra=extra,
     )
