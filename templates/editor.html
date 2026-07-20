@@ -36,9 +36,9 @@
   <div id="fmtToolbar" class="fmt-toolbar">
     <button type="button" data-cmd="bold" title="Bold"><b>B</b></button>
     <button type="button" data-cmd="italic" title="Italic"><i>I</i></button>
-    <button type="button" id="linkBtn" title="Add link">🔗 Link</button>
+    <button type="button" id="linkBtn" title="Add link (Cmd/Ctrl+K)">🔗 Link</button>
     <button type="button" id="unlinkBtn" title="Remove link">⛒ Unlink</button>
-    <span class="muted hint">Select text in a paragraph or list, then click Bold / Italic / Link.</span>
+    <span class="muted hint">Select text, then Bold (⌘B) · Italic (⌘I) · Link (⌘K). Undo ⌘Z · Redo ⇧⌘Z · Save ⌘S.</span>
   </div>
 
   <main class="wrap editor-wrap">
@@ -72,6 +72,8 @@
 
     <section class="panel">
       <h2>Content</h2>
+      <p class="muted content-hint">Drag the <b>⠿</b> handle to reorder. Hover a block and click <b>+</b> to insert below. Use the palette on the right, or the bar at the bottom.</p>
+      <button type="button" id="topInsert" class="top-insert" title="Insert block at the top">+ Insert block here</button>
       <div id="blocks"></div>
       <div class="add-bar">
         <span class="muted">Add:</span>
@@ -80,9 +82,24 @@
         <button type="button" class="btn small" data-add="list">+ List</button>
         <button type="button" class="btn small" data-add="image">+ Image</button>
         <button type="button" class="btn small" data-add="table">+ Table</button>
+        <button type="button" class="btn small" data-add="spacer">+ Spacer</button>
         <button type="button" class="btn small alt" id="pasteWordBtn">📋 Paste from Word</button>
       </div>
     </section>
+
+    <!-- Right-side insert palette -->
+    <aside id="insertPalette" class="insert-palette">
+      <span class="palette-title">Insert</span>
+      <button type="button" class="palette-btn" data-insert="paragraph"><span class="pi">¶</span> Text</button>
+      <button type="button" class="palette-btn" data-insert="heading2"><span class="pi">H2</span> Heading</button>
+      <button type="button" class="palette-btn" data-insert="heading3"><span class="pi">H3</span> Subheading</button>
+      <button type="button" class="palette-btn" data-insert="list"><span class="pi">•</span> List</button>
+      <button type="button" class="palette-btn" data-insert="image"><span class="pi">🖼</span> Image</button>
+      <button type="button" class="palette-btn" data-insert="table"><span class="pi">▦</span> Table</button>
+      <button type="button" class="palette-btn" data-insert="spacer"><span class="pi">↕</span> Spacer</button>
+      <div class="palette-sep"></div>
+      <span class="palette-hint">Inserts below the block you're editing.</span>
+    </aside>
   </main>
 
   <!-- Paste-from-Word modal -->

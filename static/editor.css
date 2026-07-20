@@ -57,8 +57,70 @@
 .hero-fields { flex: 1; display: flex; flex-direction: column; gap: .5rem; }
 
 /* Blocks */
-.block { border: 1px solid var(--line); border-radius: 12px; margin: .8rem 0; background: var(--panel); overflow: hidden; }
-.block-head { display: flex; align-items: center; justify-content: space-between; padding: .4rem .7rem; background: var(--bg); border-bottom: 1px solid var(--line); }
+.block { position: relative; border: 1px solid var(--line); border-radius: 12px; margin: .8rem 0; background: var(--panel); }
+.block-head { display: flex; align-items: center; gap: .4rem; padding: .4rem .7rem; background: var(--bg); border-bottom: 1px solid var(--line); border-radius: 12px 12px 0 0; }
+.block-ctrls { margin-left: auto; }
+.grip { cursor: grab; border: none; background: none; color: var(--muted); font-size: 1rem; line-height: 1; padding: .1rem .25rem; }
+.grip:hover { color: var(--green); }
+.grip:active { cursor: grabbing; }
+.block.dragging { opacity: .5; outline: 2px dashed var(--green-bright); }
+.block.drop-above { box-shadow: 0 -3px 0 0 var(--green-bright); }
+.block.drop-below { box-shadow: 0 3px 0 0 var(--green-bright); }
+
+/* Inline "insert below" affordance (shows on hover) */
+.insert-after {
+  position: absolute; left: 50%; bottom: 5px; transform: translateX(-50%);
+  min-width: 26px; height: 20px; padding: 0 .4rem; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--green);
+  font-weight: 700; line-height: 1; cursor: pointer; opacity: 0;
+  transition: opacity .12s; z-index: 3;
+}
+.block:hover > .insert-after, .insert-after:focus { opacity: 1; }
+.insert-after:hover { border-color: var(--green-bright); }
+.spacer-note { color: var(--muted); font-size: .8rem; font-style: italic; text-align: center; padding: .55rem; border: 1px dashed var(--line); border-radius: 8px; }
+
+/* Insert menu popover */
+.insert-menu {
+  position: absolute; z-index: 60; min-width: 172px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.16); padding: .3rem;
+  display: flex; flex-direction: column; gap: .08rem;
+}
+.insert-menu[hidden] { display: none; }
+.insert-menu button {
+  display: flex; align-items: center; gap: .55rem; text-align: left;
+  font: inherit; font-size: .83rem; padding: .45rem .55rem; border: none;
+  border-radius: 7px; background: none; color: var(--ink); cursor: pointer;
+}
+.insert-menu button:hover { background: var(--bg); color: var(--green); }
+.mi-ic { display: inline-flex; width: 22px; justify-content: center; font-weight: 700; color: var(--muted); font-size: .75rem; }
+
+/* Top insert zone */
+.content-hint { margin: .1rem 0 .7rem; font-size: .8rem; }
+.top-insert {
+  width: 100%; border: 1px dashed var(--line); background: none; color: var(--muted);
+  border-radius: 9px; padding: .4rem; font: inherit; font-size: .78rem; cursor: pointer; margin-bottom: .3rem;
+}
+.top-insert:hover { border-color: var(--green-bright); color: var(--green); }
+
+/* Right-side insert palette */
+.insert-palette {
+  position: fixed; right: 16px; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: .25rem; z-index: 6; width: 152px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: .6rem; box-shadow: 0 6px 24px rgba(0,0,0,.10);
+}
+.palette-title { font-size: .68rem; font-weight: 700; text-transform: uppercase; color: var(--muted); letter-spacing: .05em; padding: .1rem .2rem .3rem; }
+.palette-btn {
+  display: flex; align-items: center; gap: .5rem; text-align: left; font: inherit;
+  font-size: .8rem; padding: .4rem .5rem; border: 1px solid transparent;
+  border-radius: 8px; background: none; color: var(--ink); cursor: pointer;
+}
+.palette-btn:hover { border-color: var(--green-bright); color: var(--green); background: var(--bg); }
+.pi { display: inline-flex; width: 22px; justify-content: center; font-weight: 700; font-size: .72rem; color: var(--muted); }
+.palette-sep { height: 1px; background: var(--line); margin: .3rem 0; }
+.palette-hint { font-size: .68rem; color: var(--muted); padding: .1rem .2rem; }
+@media (max-width: 1200px) { .insert-palette { display: none; } }
 .block-type { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
 .block-ctrls button { border: none; background: none; cursor: pointer; font-size: .95rem; color: var(--muted); padding: .1rem .3rem; }
 .block-ctrls button:hover { color: var(--green); }

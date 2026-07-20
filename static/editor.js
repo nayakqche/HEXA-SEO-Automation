@@ -30,7 +30,7 @@ const esc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 const escAttr = (s) => esc(s).replace(/"/g, "&quot;");
 const basename = (s) => (s || "").split("/").pop();
 const assetUrl = (file) => "/outputs/" + REL + "/" + basename(file) + "?t=" + Date.now();
-function markDirty() { dirty = true; setSaveState("Unsaved changes"); }
+function markDirty() { dirty = true; setSaveState("Unsaved changes"); scheduleRecord(); }
 function setSaveState(msg) { $("#saveState").textContent = msg; }
 
 // Keep track of the last rich-text field the caret was in, so the toolbar
@@ -85,6 +85,7 @@ function blockShell(type, label) {
   el.dataset.type = type;
   el.innerHTML =
     `<div class="block-head">
+       <button type="button" class="grip" title="Drag to reorder">⠿</button>
        <span class="block-type">${label}</span>
        <div class="block-ctrls">
          <button type="button" class="mv" data-dir="up" title="Move up">↑</button>
@@ -92,18 +93,29 @@ function blockShell(type, label) {
          <button type="button" class="del" title="Delete block">🗑</button>
        </div>
      </div>
-     <div class="block-body"></div>`;
+     <div class="block-body"></div>
+     <button type="button" class="insert-after" title="Insert block below">+</button>`;
   el.querySelector('[data-dir="up"]').addEventListener("click", () => {
-    if (el.previousElementSibling) { blocksEl.insertBefore(el, el.previousElementSibling); markDirty(); }
+    const prev = prevBlock(el);
+    if (prev) { blocksEl.insertBefore(el, prev); commit(); }
   });
   el.querySelector('[data-dir="down"]').addEventListener("click", () => {
-    if (el.nextElementSibling) { blocksEl.insertBefore(el.nextElementSibling, el); markDirty(); }
+    const next = nextBlock(el);
+    if (next) { blocksEl.insertBefore(next, el); commit(); }
   });
   el.querySelector(".del").addEventListener("click", () => {
-    if (confirm("Delete this block?")) { el.remove(); markDirty(); }
+    if (confirm("Delete this block?")) { el.remove(); commit(); }
   });
+  el.querySelector(".insert-after").addEventListener("click", (e) => {
+    openInsertMenu(e.currentTarget, el, "after");
+  });
+  wireDrag(el);
   return el;
 }
+
+// Sibling helpers that skip anything that isn't a real block.
+const prevBlock = (el) => { let p = el.previousElementSibling; while (p && !p.classList.contains("block")) p = p.previousElementSibling; return p; };
+const nextBlock = (el) => { let n = el.nextElementSibling; while (n && !n.classList.contains("block")) n = n.nextElementSibling; return n; };
 
 function richDiv(html) {
   const d = document.createElement("div");
@@ -251,19 +263,222 @@ function addCell(row, value, header) {
   cell.addEventListener("input", markDirty);
 }
 
-const BUILDERS = { heading: makeHeading, paragraph: makeParagraph, list: makeList, image: makeImage, table: makeTable };
+function makeSpacer(b) {
+  const el = blockShell("spacer", "Spacer");
+  const body = el.querySelector(".block-body");
+  const note = document.createElement("div");
+  note.className = "spacer-note";
+  note.textContent = "Blank vertical space";
+  body.appendChild(note);
+  return el;
+}
 
-// ── Add-block bar ───────────────────────────────────────────────────────────
-document.querySelectorAll("[data-add]").forEach((btn) => {
+const BUILDERS = { heading: makeHeading, paragraph: makeParagraph, list: makeList, image: makeImage, table: makeTable, spacer: makeSpacer };
+
+// ── Insert new blocks (right palette, inline "+", bottom bar) ────────────────
+// Menu key → factory. Two heading levels are exposed as separate choices.
+const NEW_BLOCK = {
+  paragraph: () => makeParagraph({ html: "" }),
+  heading2:  () => makeHeading({ level: 2, text: "" }),
+  heading3:  () => makeHeading({ level: 3, text: "" }),
+  list:      () => makeList({ style: "unordered", itemsHtml: [""] }),
+  image:     () => makeImage({}),
+  table:     () => makeTable({}),
+  spacer:    () => makeSpacer({}),
+};
+const MENU_ITEMS = [
+  ["paragraph", "¶", "Text"],
+  ["heading2", "H2", "Heading"],
+  ["heading3", "H3", "Subheading"],
+  ["list", "•", "List"],
+  ["image", "🖼", "Image"],
+  ["table", "▦", "Table"],
+  ["spacer", "↕", "Spacer"],
+];
+
+let activeBlock = null; // block containing the caret, for palette inserts
+blocksEl.addEventListener("focusin", (e) => {
+  const b = e.target.closest(".block");
+  if (b) activeBlock = b;
+});
+
+function insertBlock(key, ref, where) {
+  const el = NEW_BLOCK[key]();
+  if (ref && !ref.isConnected) ref = null; // stale ref (e.g. after undo)
+  if (where === "before" && ref) blocksEl.insertBefore(el, ref);
+  else if (where === "after" && ref) blocksEl.insertBefore(el, ref.nextElementSibling);
+  else blocksEl.appendChild(el);
+  commit();
+  activeBlock = el;
+  focusFirstField(el);
+  el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  return el;
+}
+
+function focusFirstField(el) {
+  const f = el.querySelector(".rich, .heading-text, input[type=text], td");
+  if (f) { f.focus(); if (f.classList.contains("rich")) placeCaretEnd(f); }
+}
+function placeCaretEnd(node) {
+  const r = document.createRange(); r.selectNodeContents(node); r.collapse(false);
+  const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+}
+
+// Right-side palette buttons: insert after the active block (or at end).
+document.querySelectorAll("[data-insert]").forEach((btn) => {
   btn.addEventListener("click", () => {
-    const t = btn.dataset.add;
-    const defaults = { heading: { level: 2, text: "" }, paragraph: { html: "" },
-      list: { style: "unordered", itemsHtml: [""] }, image: {}, table: {} };
-    blocksEl.appendChild(BUILDERS[t](defaults[t]));
-    markDirty();
-    blocksEl.lastElementChild.scrollIntoView({ behavior: "smooth", block: "center" });
+    insertBlock(btn.dataset.insert, activeBlock, activeBlock ? "after" : "end");
   });
 });
+
+// Bottom add-bar: always append at the end.
+document.querySelectorAll("[data-add]").forEach((btn) => {
+  btn.addEventListener("click", () => insertBlock(btn.dataset.add, null, "end"));
+});
+
+// Top insert zone: insert at the very start.
+$("#topInsert")?.addEventListener("click", (e) => {
+  openInsertMenu(e.currentTarget, blocksEl.firstElementChild, "before");
+});
+
+// ── Inline insert menu (popover) ────────────────────────────────────────────
+const insertMenu = document.createElement("div");
+insertMenu.className = "insert-menu";
+insertMenu.hidden = true;
+insertMenu.innerHTML = MENU_ITEMS.map(
+  ([k, ic, lbl]) => `<button type="button" data-k="${k}"><span class="mi-ic">${ic}</span>${lbl}</button>`
+).join("");
+document.body.appendChild(insertMenu);
+let menuRef = null, menuWhere = "after";
+insertMenu.querySelectorAll("button").forEach((b) => {
+  b.addEventListener("click", () => {
+    insertBlock(b.dataset.k, menuRef, menuRef ? menuWhere : "end");
+    closeInsertMenu();
+  });
+});
+function openInsertMenu(anchor, ref, where) {
+  menuRef = ref; menuWhere = where;
+  insertMenu.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  const mw = insertMenu.offsetWidth || 180;
+  let left = r.left + window.scrollX;
+  left = Math.min(left, window.scrollX + document.documentElement.clientWidth - mw - 8);
+  insertMenu.style.left = Math.max(8, left) + "px";
+  insertMenu.style.top = (r.bottom + window.scrollY + 6) + "px";
+}
+function closeInsertMenu() { insertMenu.hidden = true; menuRef = null; }
+document.addEventListener("click", (e) => {
+  if (insertMenu.hidden) return;
+  if (!insertMenu.contains(e.target) && !e.target.closest(".insert-after, #topInsert")) closeInsertMenu();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeInsertMenu(); });
+
+// ── Drag & drop reordering ──────────────────────────────────────────────────
+let dragEl = null;
+function wireDrag(el) {
+  const grip = el.querySelector(".grip");
+  grip.addEventListener("mousedown", () => { el.setAttribute("draggable", "true"); });
+  grip.addEventListener("mouseup", () => { el.removeAttribute("draggable"); });
+  el.addEventListener("dragstart", (e) => {
+    dragEl = el; el.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", ""); } catch (_) {}
+  });
+  el.addEventListener("dragend", () => {
+    el.classList.remove("dragging");
+    el.removeAttribute("draggable");
+    clearDropMarks();
+    dragEl = null;
+    commit();
+  });
+}
+blocksEl.addEventListener("dragover", (e) => {
+  if (!dragEl) return;
+  e.preventDefault();
+  const after = dragAfterElement(e.clientY);
+  clearDropMarks();
+  if (after == null) {
+    const last = [...blocksEl.querySelectorAll(":scope > .block")].pop();
+    if (last && last !== dragEl) last.classList.add("drop-below");
+    blocksEl.appendChild(dragEl);
+  } else {
+    if (after !== dragEl) after.classList.add("drop-above");
+    blocksEl.insertBefore(dragEl, after);
+  }
+});
+function dragAfterElement(y) {
+  const els = [...blocksEl.querySelectorAll(":scope > .block:not(.dragging)")];
+  let closest = null, closestOffset = -Infinity;
+  for (const child of els) {
+    const box = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closestOffset) { closestOffset = offset; closest = child; }
+  }
+  return closest;
+}
+function clearDropMarks() {
+  blocksEl.querySelectorAll(".drop-above, .drop-below")
+    .forEach((n) => n.classList.remove("drop-above", "drop-below"));
+}
+
+// ── Undo / redo history (block-level snapshots) ─────────────────────────────
+let undoStack = [], redoStack = [], curState = null, recordTimer = null;
+function contentJSON() { return JSON.stringify(buildContent()); }
+function initHistory() { curState = contentJSON(); undoStack = []; redoStack = []; }
+function recordChange() {
+  clearTimeout(recordTimer); recordTimer = null;
+  const s = contentJSON();
+  if (s === curState) return;
+  undoStack.push(curState);
+  if (undoStack.length > 150) undoStack.shift();
+  redoStack = [];
+  curState = s;
+}
+function scheduleRecord() { clearTimeout(recordTimer); recordTimer = setTimeout(recordChange, 500); }
+// Structural change: mark dirty and snapshot immediately.
+function commit() { markDirty(); recordChange(); }
+function undo() {
+  recordChange(); // flush any pending typing into a discrete undo step first
+  if (!undoStack.length) return;
+  redoStack.push(curState);
+  const prev = undoStack.pop();
+  curState = prev;
+  renderContent(JSON.parse(prev));
+  markDirty();
+}
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(curState);
+  const next = redoStack.pop();
+  curState = next;
+  renderContent(JSON.parse(next));
+  markDirty();
+}
+
+// ── Keyboard shortcuts ──────────────────────────────────────────────────────
+document.addEventListener("keydown", (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (!mod) return;
+  const k = e.key.toLowerCase();
+  if (k === "s") { e.preventDefault(); save(); }
+  else if (k === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+  else if ((k === "z" && e.shiftKey) || k === "y") { e.preventDefault(); redo(); }
+  else if (k === "k") { e.preventDefault(); addLinkToSelection(); }
+  else if (k === "b") { if (inRich()) { e.preventDefault(); document.execCommand("bold"); markDirty(); } }
+  else if (k === "i") { if (inRich()) { e.preventDefault(); document.execCommand("italic"); markDirty(); } }
+});
+function inRich() {
+  const a = document.activeElement;
+  return a && a.classList && a.classList.contains("rich");
+}
+function addLinkToSelection() {
+  const field = inRich() ? document.activeElement : lastRich;
+  if (field) field.focus();
+  const sel = getSelection();
+  if (!sel || sel.isCollapsed) { alert("Select the text you want to link first, then press Cmd/Ctrl + K."); return; }
+  const url = prompt("Link URL (https://…)");
+  if (url) { document.execCommand("createLink", false, url.trim()); markDirty(); }
+}
 
 // ── Serialize DOM → post JSON ───────────────────────────────────────────────
 function serialize(basePost) {
@@ -283,8 +498,16 @@ function serialize(basePost) {
     alt: $("#heroAlt").value.trim(),
   });
 
+  post.content = buildContent();
+  return post;
+}
+
+// DOM → content array. Iterates only real .block elements (drop indicators and
+// menus are ignored). A spacer serializes to a blank paragraph so the server
+// renderers (which only know heading/paragraph/list/image/table) keep working.
+function buildContent() {
   const content = [];
-  [...blocksEl.children].forEach((el, i) => {
+  [...blocksEl.querySelectorAll(":scope > .block")].forEach((el, i) => {
     const t = el.dataset.type;
     const id = "block-" + (i + 1);
     if (t === "heading") {
@@ -292,6 +515,8 @@ function serialize(basePost) {
         text: el.querySelector(".heading-text").value });
     } else if (t === "paragraph") {
       content.push({ id, type: "paragraph", html: el.querySelector(".rich").innerHTML });
+    } else if (t === "spacer") {
+      content.push({ id, type: "paragraph", html: "&nbsp;" });
     } else if (t === "list") {
       const itemsHtml = [...el.querySelectorAll(".li-row .rich")].map((r) => r.innerHTML);
       content.push({ id, type: "list", style: el.querySelector(".list-style").value, itemsHtml });
@@ -307,8 +532,17 @@ function serialize(basePost) {
       content.push({ id, type: "table", rows, caption: el.querySelector(".tbl-cap").value });
     }
   });
-  post.content = content;
-  return post;
+  return content;
+}
+
+// Content array → DOM (used by initial load and by undo/redo).
+function renderContent(arr) {
+  activeBlock = null;
+  blocksEl.innerHTML = "";
+  (arr || []).forEach((b) => {
+    const fn = BUILDERS[b.type];
+    if (fn) blocksEl.appendChild(fn(b));
+  });
 }
 
 // ── Load ────────────────────────────────────────────────────────────────────
@@ -333,11 +567,8 @@ async function load() {
   ["metaTitle", "metaSubtitle", "metaCategory", "metaTags", "seoDesc", "heroAlt"]
     .forEach((id) => $("#" + id).addEventListener("input", markDirty));
 
-  blocksEl.innerHTML = "";
-  (BASE_POST.content || []).forEach((b) => {
-    const fn = BUILDERS[b.type];
-    if (fn) blocksEl.appendChild(fn(b));
-  });
+  renderContent(BASE_POST.content || []);
+  initHistory();
   dirty = false; setSaveState("Loaded.");
 }
 
@@ -426,7 +657,7 @@ $("#pasteCatch").addEventListener("paste", (e) => {
   const added = html ? blocksFromHtml(html) : blocksFromText(text);
   added.forEach((el) => blocksEl.appendChild(el));
   pasteModal.hidden = true;
-  if (added.length) { markDirty(); blocksEl.lastElementChild.scrollIntoView({ behavior: "smooth" }); }
+  if (added.length) { commit(); blocksEl.lastElementChild.scrollIntoView({ behavior: "smooth" }); }
 });
 
 function blocksFromText(text) {
