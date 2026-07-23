@@ -214,6 +214,13 @@ def run(
     prim_inv, sec_inv, allow_primary, allow_secondary = _build_inventory(
         ctx, [brand_website] + primary_urls
     )
+    # Belt-and-suspenders: even if the scraper found nothing, the brand
+    # website itself must be a valid internal link target so posts still
+    # carry at least one Hexa link.
+    if brand_website and brand_website not in allow_primary:
+        allow_primary.append(brand_website)
+        prim_inv = (prim_inv + "\n" if prim_inv and prim_inv != "(none)" else "") \
+            + f"- {brand_website}  →  \"Hexa Climate home\""
 
     yield {
         "event": "grounded",
@@ -254,6 +261,7 @@ def run(
         "extra_instructions": extra_instructions, "fmt": fmt,
         "target_words": target_words, "make_images": make_images,
         "up_images": up_images, "up_tables": up_tables,
+        "personalized": personalized,
         "media_brief": _media_brief(up_images, up_tables, personalized=personalized),
     }
 
@@ -314,7 +322,12 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
 
     # Guarantee every uploaded image/table is present with the real data. Runs
     # BEFORE the cap so uploaded images are never counted or stripped.
-    _ensure_uploaded_media(post, job.get("up_images", []), job.get("up_tables", []))
+    _ensure_uploaded_media(
+        post,
+        job.get("up_images", []),
+        job.get("up_tables", []),
+        personalized=job.get("personalized", False),
+    )
 
     # Never repeat the same table, image, paragraph, or list within one post.
     _dedupe_content(post)
@@ -452,15 +465,24 @@ def _media_brief(images: list[dict], tables: list[dict], *, personalized: bool =
     ]
     if personalized:
         lines.append(
-            "PERSONALIZED / HEXA-UPDATE MODE — the uploads are the SPINE of this "
-            "post. Every uploaded image and every uploaded table MUST be discussed "
-            "in the body prose. For each image, write a short paragraph directly "
-            "before or after it describing, in the third person, what Hexa has "
-            "achieved / delivered / demonstrated (e.g. \"Hexa has commissioned…\", "
-            "\"Hexa's team completed…\"). For each table, add a paragraph that "
-            "interprets the actual numbers in it — call out the biggest movers, "
-            "the year-on-year change, or the milestone the figures represent — "
-            "again in a third-person Hexa voice. Do not treat any upload as "
+            "PERSONALIZED / HEXA-UPDATE MODE — the uploads DEFINE the post's "
+            "topic. Do NOT treat the focus keyword as the subject. Instead: "
+            "1) Read every uploaded image description and table caption carefully; "
+            "2) Derive the post's title, subtitle, slug, first heading, and first "
+            "paragraph from the SUBJECT of those uploads (e.g. if an image is "
+            "about wind turbine spacing, the post is a Hexa update about wind "
+            "turbine spacing — not about the focus keyword's original topic); "
+            "3) Use the focus keyword only as an SEO hint that can be woven in "
+            "where it fits naturally, not as the topic itself. "
+            "The system places each uploaded image and table near the TOP of "
+            "the post (right after the intro paragraph), so write your intro "
+            "already introducing what the reader is about to see. For each "
+            "image, write a short paragraph describing, in the third person, "
+            "what Hexa has achieved / delivered / demonstrated with it "
+            "(e.g. \"Hexa has commissioned…\", \"Hexa's team completed…\"). For "
+            "each table, add a paragraph that interprets the actual numbers — "
+            "biggest movers, year-on-year change, milestone the figures represent — "
+            "in the same third-person Hexa voice. Do not treat any upload as "
             "decoration or filler."
         )
     if images:
@@ -483,17 +505,44 @@ def _insert_before_cta(content: list[dict], block: dict) -> None:
     content.append(block)
 
 
-def _ensure_uploaded_media(post: dict, images: list[dict], tables: list[dict]) -> None:
+def _insert_after_intro(content: list[dict], block: dict) -> None:
+    """Insert `block` high up in the post — right after the first paragraph that
+    follows the first heading. This is the placement used in personalized mode
+    so uploaded resources become the spine of the post rather than tail decoration.
+    """
+    seen_heading = False
+    for idx, b in enumerate(content):
+        t = b.get("type")
+        if t == "heading":
+            seen_heading = True
+            continue
+        if seen_heading and t == "paragraph":
+            content.insert(idx + 1, block)
+            return
+    # Fallback — no intro found; insert as the second block so it's still near the top.
+    content.insert(min(1, len(content)), block)
+
+
+def _ensure_uploaded_media(
+    post: dict,
+    images: list[dict],
+    tables: list[dict],
+    *,
+    personalized: bool = False,
+) -> None:
     """Insert each uploaded image/table exactly once, with verified data.
 
     The pipeline owns placement (Claude is told not to recreate them). Any block
     the model may still have produced for these ids is dropped first so nothing
-    is duplicated, and captions never leak the raw filename.
+    is duplicated, and captions never leak the raw filename. In personalized
+    mode uploads are placed near the top (the post is about them); otherwise
+    they sit just before the CTA.
     """
     slug = post.get("slug", "")
     up_ids = ({f"upload-table-{t['id']}" for t in tables}
               | {f"upload-img-{i['id']}" for i in images})
     content = [b for b in post.get("content", []) if b.get("id") not in up_ids]
+    place = _insert_after_intro if personalized else _insert_before_cta
 
     for tb in tables:
         # Uploaded tables ship with row[0] as headers; wrap in the CMS
@@ -501,13 +550,13 @@ def _ensure_uploaded_media(post: dict, images: list[dict], tables: list[dict]) -
         rows = tb["rows"] or []
         headers = rows[0] if rows else []
         body = rows[1:] if rows else []
-        _insert_before_cta(content, {
+        place(content, {
             "id": f"upload-table-{tb['id']}", "type": "table",
             "data": {"headers": list(headers), "rows": [list(r) for r in body]},
             "caption": (tb.get("description") or "").strip(),
         })
     for im in images:
-        _insert_before_cta(content, {
+        place(content, {
             "id": f"upload-img-{im['id']}", "type": "image",
             "src": f"/assets/blogs/{slug}/{im['stored_as']}",
             "alt": (im.get("description") or "Renewable energy visual from Hexa Climate").strip(),
