@@ -30,7 +30,8 @@ def _image_exists(asset_dir: Path | None, src: str) -> bool:
     """True if we have the actual image file in asset_dir."""
     if not asset_dir or not src:
         return False
-    return (asset_dir / _basename(src)).exists()
+    p = asset_dir / _basename(src)
+    return p.is_file()
 
 
 def _esc(text: str) -> str:
@@ -40,11 +41,13 @@ def _esc(text: str) -> str:
 def _table_data(block: dict) -> tuple[list[str], list[list[str]]]:
     """Normalise a table block into (headers, rows) of plain strings.
 
-    Tolerates a missing `headers` (first row becomes the header) and pads short
-    rows so the columns always line up.
+    Accepts both the CMS export shape (`data: {headers, rows}`) and the flat
+    shape (`headers`, `rows` at the block root). Tolerates a missing `headers`
+    (first row becomes the header) and pads short rows so columns line up.
     """
-    headers = [str(h) for h in (block.get("headers") or [])]
-    raw_rows = block.get("rows") or []
+    data = block.get("data") if isinstance(block.get("data"), dict) else {}
+    headers = [str(h) for h in (data.get("headers") or block.get("headers") or [])]
+    raw_rows = data.get("rows") or block.get("rows") or []
     rows = [[("" if c is None else str(c)) for c in r] for r in raw_rows]
     if not headers and rows:
         headers, rows = rows[0], rows[1:]
@@ -235,6 +238,14 @@ def render_markdown(post: dict) -> str:
             if block.get("caption"):
                 lines.append(f"\n*{block['caption']}*")
             lines.append("")
+        elif t == "quote":
+            body = _inline_html_to_md(block["html"]) if block.get("html") \
+                   else (block.get("text") or "")
+            for line in body.splitlines() or [body]:
+                lines.append(f"> {line}")
+            if block.get("cite"):
+                lines.append(f">\n> — {block['cite']}")
+            lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -268,6 +279,10 @@ _HTML_CSS = """
   th,td{border:1px solid #dbe4f5;padding:.5rem .7rem;text-align:left;vertical-align:top}
   thead th{background:#eef2fb;color:#1e40af;font-weight:700}
   tbody tr:nth-child(even){background:#f7f9fe}
+  blockquote{margin:1.5rem 0;padding:.6rem 1rem;border-left:4px solid #1d4ed8;
+             background:#f4f7ff;color:#1e293b;font-style:italic;border-radius:0 8px 8px 0}
+  blockquote p{margin:.2rem 0}
+  blockquote .cite{margin-top:.4rem;color:#475569;font-style:normal;font-size:.85rem}
 """
 
 
@@ -341,6 +356,10 @@ def _html_blocks(blocks: Iterable[dict], asset_dir: Path | None) -> list[str]:
             ) + "</tbody>"
             cap_html = f"<figcaption>{_esc(b.get('caption', ''))}</figcaption>" if b.get("caption") else ""
             out.append(f'<figure class="table-wrap"><table>{thead}{tbody}</table>{cap_html}</figure>')
+        elif t == "quote":
+            body = b["html"] if b.get("html") else _esc(b.get("text", ""))
+            cite_html = f'<footer class="cite">— {_esc(b["cite"])}</footer>' if b.get("cite") else ""
+            out.append(f'<blockquote><p>{body}</p>{cite_html}</blockquote>')
     return out
 
 
@@ -526,8 +545,9 @@ def render_docx(post: dict, output_path: Path, asset_dir: Path) -> None:
                     p = doc.add_paragraph(style=style)
                     _write_paragraph_with_links(p, item, links)
         elif bt == "image":
-            img_path = asset_dir / _basename(block.get("src", ""))
-            if img_path.exists():
+            src_name = _basename(block.get("src", ""))
+            img_path = (asset_dir / src_name) if src_name else None
+            if img_path and img_path.is_file():
                 doc.add_picture(str(img_path), width=Inches(6))
                 if block.get("caption"):
                     cp = doc.add_paragraph()
@@ -559,6 +579,17 @@ def render_docx(post: dict, output_path: Path, asset_dir: Path) -> None:
                     cp = doc.add_paragraph()
                     cr = cp.add_run(block["caption"]); cr.italic = True
                     cr.font.size = Pt(9); cr.font.color.rgb = _SLATE
+        elif bt == "quote":
+            qp = doc.add_paragraph(style="Intense Quote") if "Intense Quote" \
+                in [s.name for s in doc.styles] else doc.add_paragraph()
+            if block.get("html"):
+                _write_inline_html(qp, block["html"])
+            else:
+                _add_text_run(qp, block.get("text", ""))
+            if block.get("cite"):
+                cp = doc.add_paragraph()
+                cr = cp.add_run(f"— {block['cite']}")
+                cr.italic = True; cr.font.size = Pt(9); cr.font.color.rgb = _SLATE
 
     if meta.get("tags"):
         doc.add_paragraph()

@@ -177,8 +177,13 @@ fencing. The JSON MUST match this schema exactly:
        "items": ["...", "..."], "links": [] }},
     {{ "id": "section-x-table-1", "type": "table",
        "caption": "Short caption for a REAL data table from a source",
-       "headers": ["Column A", "Column B"],
-       "rows": [["cell", "cell"], ["cell", "cell"]] }},
+       "data": {{
+         "headers": ["Column A", "Column B"],
+         "rows": [["cell", "cell"], ["cell", "cell"]]
+       }} }},
+    {{ "id": "section-x-quote-1", "type": "quote",
+       "text": "A single-sentence pull quote from a source, verbatim.",
+       "cite": "Attribution (source or speaker)" }},
     {{ "id": "section-x-image", "type": "image",
        "src": "/assets/blogs/<slug>/section-x-image.png",
        "alt": "Real photographable renewable-energy scene",
@@ -194,15 +199,19 @@ fencing. The JSON MUST match this schema exactly:
 
 CONTENT BLOCK RULES:
 - `id` is a unique kebab-case slug per block.
-- `type` ∈ heading | paragraph | list | image | table.
+- `type` ∈ heading | paragraph | list | image | table | quote.
 - `heading.level` is 2 or 3.
 - `list.style` is "unordered" or "ordered".
 - `links` is OPTIONAL on paragraph and list blocks. Omit if no links. When
   present, each `anchor` MUST be a verbatim substring of `text` (or of one of
   the list `items`). `kind` is "internal" or "citation".
 - `table` is for REAL tabular data only (from a "TABLE:" source block or an
-  uploaded table). `headers` is a list of column names, `rows` is a list of
-  equal-length string rows. Never fabricate a table from thin air.
+  uploaded table). Put `headers` and `rows` INSIDE a `data` object:
+  `"data": {{ "headers": [...], "rows": [[...], [...]] }}`. Never fabricate
+  table data from thin air.
+- `quote` blocks carry a verbatim `text` pull-quote (no invented quotes) and
+  an optional `cite` attribution. Use them sparingly for real, source-backed
+  quotations.
 
 IMAGE RULES (strict — we source stock photos from Pexels, not AI):
 - 1 hero image (in `hero.image`, alt = photographable subject).

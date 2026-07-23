@@ -219,10 +219,14 @@ function makeTable(b) {
   const wrap = document.createElement("div"); wrap.className = "tbl-wrap";
   const table = document.createElement("table"); table.className = "tbl-edit";
   wrap.appendChild(table);
-  // Build a single grid: header row (if any) + data rows.
+  // Accept both shapes: the CMS export {data:{headers,rows}} and the older
+  // flat {headers,rows}. Build a single grid: header row (if any) + data rows.
+  const src = (b.data && typeof b.data === "object") ? b.data : b;
+  const headers = src.headers || [];
+  const rows = src.rows || [];
   let grid = [];
-  if (b.headers && b.headers.length) grid.push(b.headers.slice());
-  (b.rows || []).forEach((r) => grid.push(r.slice()));
+  if (headers.length) grid.push(headers.slice());
+  rows.forEach((r) => grid.push(r.slice()));
   if (!grid.length) grid = [["", ""], ["", ""]];
   grid.forEach((r, ri) => addTableRow(table, r, ri === 0));
 
@@ -263,6 +267,17 @@ function addCell(row, value, header) {
   cell.addEventListener("input", markDirty);
 }
 
+function makeQuote(b) {
+  const el = blockShell("quote", "Quote");
+  const body = el.querySelector(".block-body");
+  const rich = richDiv(b.html || esc(b.text || ""));
+  rich.classList.add("quote-rich");
+  const cite = fieldInput("Attribution (optional): source or speaker", b.cite || "");
+  cite.classList.add("quote-cite");
+  body.append(rich, cite);
+  return el;
+}
+
 function makeSpacer(b) {
   const el = blockShell("spacer", "Spacer");
   const body = el.querySelector(".block-body");
@@ -273,7 +288,7 @@ function makeSpacer(b) {
   return el;
 }
 
-const BUILDERS = { heading: makeHeading, paragraph: makeParagraph, list: makeList, image: makeImage, table: makeTable, spacer: makeSpacer };
+const BUILDERS = { heading: makeHeading, paragraph: makeParagraph, list: makeList, image: makeImage, table: makeTable, quote: makeQuote, spacer: makeSpacer };
 
 // ── Insert new blocks (right palette, inline "+", bottom bar) ────────────────
 // Menu key → factory. Two heading levels are exposed as separate choices.
@@ -284,6 +299,7 @@ const NEW_BLOCK = {
   list:      () => makeList({ style: "unordered", itemsHtml: [""] }),
   image:     () => makeImage({}),
   table:     () => makeTable({}),
+  quote:     () => makeQuote({}),
   spacer:    () => makeSpacer({}),
 };
 const MENU_ITEMS = [
@@ -293,6 +309,7 @@ const MENU_ITEMS = [
   ["list", "•", "List"],
   ["image", "🖼", "Image"],
   ["table", "▦", "Table"],
+  ["quote", "❝", "Quote"],
   ["spacer", "↕", "Spacer"],
 ];
 
@@ -527,9 +544,19 @@ function buildContent() {
         caption: el.querySelector(".img-cap").value,
         href: el.querySelector(".img-href").value });
     } else if (t === "table") {
-      const rows = [...el.querySelectorAll(".tbl-edit tr")].map(
-        (tr) => [...tr.cells].map((c) => c.textContent.trim()));
-      content.push({ id, type: "table", rows, caption: el.querySelector(".tbl-cap").value });
+      // Serialise in the CMS export shape: first row = headers, rest = rows,
+      // both nested under `data`. The server sanitiser also normalises this.
+      const trs = [...el.querySelectorAll(".tbl-edit tr")];
+      const grid = trs.map((tr) => [...tr.cells].map((c) => c.textContent.trim()));
+      const headers = grid.length ? grid[0] : [];
+      const rows = grid.slice(1);
+      content.push({ id, type: "table",
+        data: { headers, rows },
+        caption: el.querySelector(".tbl-cap").value });
+    } else if (t === "quote") {
+      content.push({ id, type: "quote",
+        html: el.querySelector(".rich").innerHTML,
+        cite: el.querySelector(".quote-cite").value });
     }
   });
   return content;

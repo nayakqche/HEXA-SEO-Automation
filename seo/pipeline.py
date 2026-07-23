@@ -21,7 +21,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import image_gen, renderer, store, uploads
+from . import editing, image_gen, renderer, store, uploads
 from .blog_writer import validate_and_clean_links, write_blog
 from .scraper import GroundingContext, build_context
 
@@ -360,6 +360,11 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
             except Exception as exc:  # noqa: BLE001
                 image_errors.append(f"{img['id']}: {exc}")
 
+    # Normalise into the CMS export schema (data-wrapped tables, image_id on
+    # every image, sanitised inline html) so the JSON download matches the
+    # format the downstream CMS expects.
+    editing.sanitize_post(post)
+
     # Persist all output formats.
     (post_dir / "post.json").write_text(
         json.dumps(post, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -471,9 +476,14 @@ def _ensure_uploaded_media(post: dict, images: list[dict], tables: list[dict]) -
     content = [b for b in post.get("content", []) if b.get("id") not in up_ids]
 
     for tb in tables:
+        # Uploaded tables ship with row[0] as headers; wrap in the CMS
+        # `data` shape so the export matches the schema.
+        rows = tb["rows"] or []
+        headers = rows[0] if rows else []
+        body = rows[1:] if rows else []
         _insert_before_cta(content, {
             "id": f"upload-table-{tb['id']}", "type": "table",
-            "rows": tb["rows"],
+            "data": {"headers": list(headers), "rows": [list(r) for r in body]},
             "caption": (tb.get("description") or "").strip(),
         })
     for im in images:
@@ -510,8 +520,13 @@ def _block_signature(block: dict):
         key = _norm(block.get("src", "")) + "|" + _norm(block.get("alt", ""))
         return ("image", key) if key.strip("|") else None
     if t == "table":
-        rows = tuple(tuple(str(c) for c in r) for r in block.get("rows", []))
+        data = block.get("data") if isinstance(block.get("data"), dict) else {}
+        raw_rows = data.get("rows", block.get("rows", []))
+        rows = tuple(tuple(str(c) for c in r) for r in raw_rows)
         return ("table", rows) if rows else None
+    if t == "quote":
+        s = _norm(block.get("text", ""))
+        return ("quote", s) if s else None
     return None
 
 
