@@ -20,7 +20,8 @@ const BLOGS_KEY  = "hexa-seo-blogs-v1";      // generated blog records
 const THEME_KEY  = "hexa-seo-theme";         // "dark" | "light"
 
 const PERSIST_FIELDS = ["website", "primary_sources", "secondary_sources",
-                        "keywords", "extra", "format", "target_words", "limit"];
+                        "keywords", "brief", "extra", "format", "target_words",
+                        "limit", "personalized"];
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 function applyTheme(theme) {
@@ -41,11 +42,13 @@ function saveForm() {
   const data = {};
   for (const name of PERSIST_FIELDS) {
     const el = form.elements[name];
-    if (el) data[name] = el.value;
+    if (!el) continue;
+    data[name] = el.type === "checkbox" ? el.checked : el.value;
   }
   localStorage.setItem(STORE_KEY, JSON.stringify(data));
   updateQueueInfo();
   renderKeywordBlocks();
+  applyPersonalizedMode();
 }
 
 function restoreForm() {
@@ -53,10 +56,39 @@ function restoreForm() {
   try { data = JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); } catch {}
   for (const name of PERSIST_FIELDS) {
     const el = form.elements[name];
-    if (el && data[name] != null && data[name] !== "") el.value = data[name];
+    if (!el || data[name] == null) continue;
+    if (el.type === "checkbox") el.checked = !!data[name];
+    else if (data[name] !== "") el.value = data[name];
   }
   updateQueueInfo();
   renderKeywordBlocks();
+  applyPersonalizedMode();
+}
+
+// Personalized toggle: force the format to hexa-update (and lock it) so the
+// writer treats the post as a Hexa developments update, and reveal a stronger
+// hint for the brief field. Also drives how the "keyword_done" event is handled.
+function applyPersonalizedMode() {
+  const on = form.elements["personalized"] && form.elements["personalized"].checked;
+  const fmt = form.elements["format"];
+  if (!fmt) return;
+  if (on) {
+    fmt.dataset.prevValue = fmt.dataset.prevValue || fmt.value;
+    fmt.value = "hexa-update";
+    fmt.disabled = true;
+    fmt.title = "Locked while Personalized is on — always writes as a Hexa developments update.";
+  } else {
+    fmt.disabled = false;
+    fmt.title = "";
+    if (fmt.value === "hexa-update" && fmt.dataset.prevValue) {
+      fmt.value = fmt.dataset.prevValue;
+    }
+    delete fmt.dataset.prevValue;
+  }
+  const brief = document.getElementById("briefText");
+  if (brief) brief.placeholder = on
+    ? "What this Hexa update should convey — e.g. commissioning of the 200 MW Wardha project, key numbers to interpret from the uploaded table."
+    : "e.g. celebrate the commissioning of our 200 MW Wardha wind project; highlight the OA capacity commissioned in April; explain the numbers in the uploaded table.";
 }
 
 // ── Keyword status (used / not used) ─────────────────────────────────────────
@@ -184,6 +216,7 @@ function renderKeywordBlocks() {
 }
 
 form.addEventListener("input", saveForm);
+form.addEventListener("change", saveForm); // catches checkbox toggles & selects
 
 // ── Generated-blog persistence ───────────────────────────────────────────────
 function loadBlogs() {
@@ -438,10 +471,21 @@ function restoreBlogs() {
 }
 
 // ── Run ──
-let isRegen = false;   // true while a single-keyword regeneration is streaming
+let isRegen = false;         // single-keyword regeneration in flight
+let isPersonalized = false;  // this run is a Hexa developments update
+const personalizedOn = () =>
+  !!(form.elements["personalized"] && form.elements["personalized"].checked);
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();
+  if (personalizedOn()) {
+    // Personalized runs: keyword table is not consulted or updated.
+    // Use whatever's typed in the keyword box (first one), else a default topic.
+    const raw = ($("#keywordsText").value || "").split("\n").map((s) => s.trim()).filter(Boolean);
+    const kw = raw[0] || "Hexa Climate developments update";
+    runGeneration([kw], { personalized: true });
+    return;
+  }
   const pending = pendingKeywords();
   if (!pending.length) {
     alert("No unused keywords to generate. Add keywords, or click a green ✓ used to re-queue one.");
@@ -462,6 +506,7 @@ function regenerateKeyword(kw) {
 async function runGeneration(keywordList, opts = {}) {
   if (!keywordList.length) return;
   isRegen = !!opts.regenerate;
+  isPersonalized = !!opts.personalized || personalizedOn();
   runBtn.disabled = true;
   runBtn.textContent = "Working…";
   runPanel.hidden = false;
@@ -469,10 +514,16 @@ async function runGeneration(keywordList, opts = {}) {
   total = 0; completed = 0; setProgress();
   runPanel.scrollIntoView({ behavior: "smooth" });
   if (isRegen) log(`↻ Regenerating a fresh version of: ${keywordList[0]}`, "l-dim");
+  if (isPersonalized) log("★ Personalized Hexa developments post — keyword table will NOT be marked used.", "l-dim");
 
   const fd = new FormData(form);
   fd.set("keywords", keywordList.join("\n"));
   fd.set("make_images", $("#makeImages").checked ? "true" : "false");
+  if (isPersonalized) {
+    fd.set("personalized", "1");
+    fd.set("format", "hexa-update"); // in case the disabled <select> isn't sent
+    fd.set("limit", String(keywordList.length));
+  }
   if (opts.regenerate) {
     fd.set("regenerate", "1");
     fd.set("limit", String(keywordList.length));
@@ -514,6 +565,7 @@ async function runGeneration(keywordList, opts = {}) {
 
   function reset() {
     isRegen = false;
+    isPersonalized = false;
     runBtn.disabled = false;
     runBtn.textContent = "Generate blogs →";
   }
@@ -549,7 +601,9 @@ function handleEvent(ev) {
       } else {
         addBlog(ev);           // persist first so its link is ready for the table
       }
-      markUsed(ev.keyword);    // mark used (turns green ✓, refreshes the blog link)
+      // Personalized (Hexa developments) runs are occasional posts — they must
+      // NOT consume a keyword from the queue.
+      if (!isPersonalized) markUsed(ev.keyword);
       renderCard(ev);
       break;
     case "keyword_error":

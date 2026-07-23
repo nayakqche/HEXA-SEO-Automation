@@ -363,7 +363,7 @@ def write_blog(
     effort: str | None = None,
 ) -> dict:
     client = _client()
-    model = model or os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
+    model = model or os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
     effort = effort or os.getenv("CLAUDE_EFFORT", "high")
     today = dt.date.today().isoformat()
     target_words = max(400, min(target_words, 3000))

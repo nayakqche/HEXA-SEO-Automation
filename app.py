@@ -147,6 +147,16 @@ def generate():
         secondary_urls = pipeline.parse_urls(request.form.get("secondary_sources", ""))
 
         fmt = (request.form.get("format") or "paragraph").lower()
+        # "Personalized" (Hexa developments) mode: always writes as a hexa-update,
+        # regardless of what the format dropdown shows.
+        personalized = (request.form.get("personalized") or "").lower() in ("1", "true", "on", "yes")
+        if personalized:
+            fmt = "hexa-update"
+        # Optional blog brief (what this specific post should convey). Rolled into
+        # extra_instructions so the writer already respects it.
+        brief = (request.form.get("brief") or "").strip()
+        if brief:
+            extra = (f"{extra}\nAuthor's brief for this post: {brief}").strip() if extra else f"Author's brief for this post: {brief}"
         try:
             target_words = int(request.form.get("target_words") or 1400)
         except ValueError:
@@ -198,6 +208,7 @@ def generate():
                 max_pages=max_pages,
                 fmt=fmt,
                 target_words=target_words,
+                personalized=personalized,
             ):
                 yield json.dumps(event) + "\n"
         except Exception as exc:  # noqa: BLE001

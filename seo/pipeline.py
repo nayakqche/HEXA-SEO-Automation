@@ -179,6 +179,7 @@ def run(
     max_pages: int = 12,
     fmt: str = "paragraph",
     target_words: int = 1400,
+    personalized: bool = False,
 ):
     OUTPUT_DIR.mkdir(exist_ok=True)
     run_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -253,7 +254,7 @@ def run(
         "extra_instructions": extra_instructions, "fmt": fmt,
         "target_words": target_words, "make_images": make_images,
         "up_images": up_images, "up_tables": up_tables,
-        "media_brief": _media_brief(up_images, up_tables),
+        "media_brief": _media_brief(up_images, up_tables, personalized=personalized),
     }
 
     concurrency = max(1, min(int(os.getenv("CONCURRENCY", "1")), 8))
@@ -432,8 +433,14 @@ def _cap_image_blocks(post: dict, *, limit: int = 2) -> None:
 
 # ── Uploaded-media embedding ───────────────────────────────────────────────
 
-def _media_brief(images: list[dict], tables: list[dict]) -> str:
-    """Tell Claude uploaded media is placed by the system, so it never duplicates it."""
+def _media_brief(images: list[dict], tables: list[dict], *, personalized: bool = False) -> str:
+    """Tell Claude uploaded media is placed by the system, so it never duplicates it.
+
+    When ``personalized`` is True (Hexa developments run) the tone shifts: the
+    uploads become first-priority material, not just decorations — each image
+    needs a third-person "Hexa has achieved…" paragraph next to it, and each
+    table needs a prose interpretation of its numbers.
+    """
     if not images and not tables:
         return ""
     lines: list[str] = [
@@ -443,6 +450,19 @@ def _media_brief(images: list[dict], tables: list[dict]) -> str:
         "another table or list. You may refer to them in prose (for example \"the "
         "table below\" or \"the chart shown\") but never reproduce their contents."
     ]
+    if personalized:
+        lines.append(
+            "PERSONALIZED / HEXA-UPDATE MODE — the uploads are the SPINE of this "
+            "post. Every uploaded image and every uploaded table MUST be discussed "
+            "in the body prose. For each image, write a short paragraph directly "
+            "before or after it describing, in the third person, what Hexa has "
+            "achieved / delivered / demonstrated (e.g. \"Hexa has commissioned…\", "
+            "\"Hexa's team completed…\"). For each table, add a paragraph that "
+            "interprets the actual numbers in it — call out the biggest movers, "
+            "the year-on-year change, or the milestone the figures represent — "
+            "again in a third-person Hexa voice. Do not treat any upload as "
+            "decoration or filler."
+        )
     if images:
         lines.append("Uploaded images (placed automatically):")
         for im in images:
