@@ -324,6 +324,7 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
         extra_instructions=job["extra_instructions"],
         fmt=job["fmt"], target_words=job["target_words"],
         media_brief=job.get("media_brief", ""),
+        primary_urls=job.get("allow_primary", []),
     )
 
     post = written["post"]
@@ -348,6 +349,8 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
     _cap_image_blocks(post, limit=img_limit)
 
     link_stats = validate_and_clean_links(post, job["allow_primary"], job["allow_secondary"])
+
+    _ensure_internal_links(post, job.get("allow_primary", []))
 
     base = f"{i:03d}-{slug}"
     post_dir = run_dir / base
@@ -435,6 +438,87 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
         "image_errors": image_errors,
         "usage": written["usage"],
     }
+
+
+def _ensure_internal_links(post: dict, primary_urls: list[str]) -> None:
+    """Guarantee the post has internal links to primary URLs.
+
+    If the model produced fewer than 2 internal links, inject them into the
+    CTA paragraph (and intro paragraph if needed) so every blog ships with
+    Hexa links regardless of what the model decided to do.
+    """
+    if not primary_urls:
+        return
+
+    existing = 0
+    for b in post.get("content", []):
+        for lnk in b.get("links", []):
+            if lnk.get("kind") == "internal":
+                existing += 1
+    if existing >= 2:
+        return
+
+    _ANCHORS = [
+        ("Hexa Climate", None),
+        ("renewable energy solutions", None),
+        ("our renewable energy projects", None),
+        ("green energy for businesses", None),
+        ("explore our blog", None),
+        ("talk to our team", None),
+        ("learn more about Hexa", None),
+    ]
+
+    main_url = primary_urls[0]
+    blogs_url = next((u for u in primary_urls if "/blog" in u.lower()), None)
+    projects_url = next((u for u in primary_urls if "/project" in u.lower() or "/re-" in u.lower()), None)
+
+    needed = max(0, 2 - existing)
+    injected = 0
+    content = post.get("content", [])
+
+    for b in reversed(content):
+        if injected >= needed:
+            break
+        if b.get("type") != "paragraph":
+            continue
+        text = b.get("text", "")
+        if not text or len(text) < 40:
+            continue
+        links = b.setdefault("links", [])
+        used_urls = {lnk.get("href") for lnk in links}
+        bid = b.get("id", "")
+        is_cta = "cta" in bid.lower()
+
+        url = main_url
+        if is_cta:
+            url = main_url
+        elif blogs_url and blogs_url not in used_urls:
+            url = blogs_url
+        elif projects_url and projects_url not in used_urls:
+            url = projects_url
+
+        if url in used_urls:
+            continue
+
+        for anchor_text, _ in _ANCHORS:
+            if anchor_text.lower() in text.lower():
+                idx = text.lower().index(anchor_text.lower())
+                exact = text[idx:idx + len(anchor_text)]
+                links.append({"anchor": exact, "href": url, "kind": "internal"})
+                injected += 1
+                break
+        else:
+            last_sentence_start = text.rfind(". ")
+            if last_sentence_start > 0:
+                snippet = text[last_sentence_start + 2:]
+            else:
+                snippet = text
+            words = snippet.split()
+            if len(words) >= 3:
+                anchor = " ".join(words[:3])
+                if anchor in text:
+                    links.append({"anchor": anchor, "href": url, "kind": "internal"})
+                    injected += 1
 
 
 def _cap_image_blocks(post: dict, *, limit: int = 2) -> None:

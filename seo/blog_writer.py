@@ -88,11 +88,14 @@ CITATION (trusted external sources — use for external links):
 {secondary_inventory}
 ================================================================================
 
-LINK RULES — absolute:
-- INTERNAL: Add 2–3 internal links per blog. Each link's `href` must be a Hexa
-  URL from the INTERNAL list (or a deep path on the same domain). Anchor text
-  must be a natural phrase already in the paragraph (e.g. "our green energy
-  solutions"), not generic ("click here").
+LINK RULES — absolute and MANDATORY (non-negotiable):
+- INTERNAL: You MUST add AT LEAST 3 internal links per blog. This is COMPULSORY,
+  not optional. Each link's `href` must be a Hexa URL from the INTERNAL list
+  (or a deep path on the same domain). Anchor text must be a natural phrase
+  already in the paragraph (e.g. "our green energy solutions", "renewable
+  energy projects"), not generic ("click here"). Spread them: one in the intro,
+  one or two in mid-body sections, and one in the CTA. If the INTERNAL list
+  has URLs, you MUST use them. Blogs without internal links are REJECTED.
 - CITATION: Add 2–4 external citation links per blog at points where you
   reference a stat, regulation, or named programme (e.g. "the MNRE's Green
   Open Access Rules"). The `href` MUST come from the CITATION list (or a
@@ -230,11 +233,16 @@ IMAGE RULES (strict — we source stock photos from Pexels, not AI):
 - Always end with a CTA heading + paragraph that contains at least one internal
   link to a Hexa contact / services page.
 
-LINK DISTRIBUTION:
-- 2–3 INTERNAL links total across the blog (Hexa pages).
+LINK DISTRIBUTION (MANDATORY):
+- AT LEAST 3 INTERNAL links total across the blog (Hexa pages). This is the
+  single most important structural requirement after content quality. Use
+  URLs from the INTERNAL inventory. Place one in the intro, one or two in
+  the body, and one in the CTA paragraph. If you skip internal links, the
+  post will be REJECTED and regenerated.
 - 2–4 CITATION links total across the blog (secondary sources).
 - Spread them across different blocks. Don't pile multiple links into one
   paragraph.
+{primary_links_directive}
 
 Return ONLY the JSON object.\
 """
@@ -361,6 +369,7 @@ def write_blog(
     media_brief: str = "",
     model: str | None = None,
     effort: str | None = None,
+    primary_urls: list[str] | None = None,
 ) -> dict:
     client = _client()
     model = model or os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
@@ -384,12 +393,25 @@ def write_blog(
         }
     ]
     extra = f"\nExtra guidance: {extra_instructions}" if extra_instructions else ""
+
+    primary_links_directive = ""
+    if primary_urls:
+        url_lines = "\n".join(f"  - {u}" for u in primary_urls[:8])
+        primary_links_directive = (
+            f"MANDATORY INTERNAL LINKS (use at least 3 of these in your post):\n"
+            f"{url_lines}\n"
+            f"Pick natural anchor text phrases from your paragraphs and attach "
+            f"these URLs as internal links. The CTA paragraph MUST link to the "
+            f"main Hexa website."
+        )
+
     user = _USER.format(
         keyword=keyword, today=today,
         format_directive=_format_directive(fmt),
         image_directive=_image_directive(fmt),
         target_words=target_words, min_words=min_w, max_words=max_w,
         extra=extra,
+        primary_links_directive=primary_links_directive,
     )
 
     max_tokens = int(os.getenv("CLAUDE_MAX_TOKENS", "16000"))
