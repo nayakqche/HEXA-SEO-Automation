@@ -150,18 +150,47 @@ def sanitize_post(post: dict) -> dict:
             b["caption"] = _plain(b.get("caption"))
             href = str(b.get("href") or "").strip()
             b["href"] = href if _safe_href(href) else ""
+            # image_id is set later by _assign_image_ids so numbering stays
+            # sequential per post and survives edits.
         elif t == "table":
-            b["rows"] = [[_plain(c) for c in (row or [])] for row in (b.get("rows") or [])]
-            if b.get("headers"):
-                b["headers"] = [_plain(h) for h in b["headers"]]
+            # Accept both the flat shape (headers/rows at block root) and the
+            # CMS export shape (data.{headers,rows}); normalise to `data`.
+            data = b.get("data") if isinstance(b.get("data"), dict) else {}
+            headers = data.get("headers", b.get("headers") or [])
+            raw_rows = data.get("rows", b.get("rows") or [])
+            rows = [[_plain(c) for c in (row or [])] for row in raw_rows]
+            headers = [_plain(h) for h in headers]
+            b.pop("headers", None); b.pop("rows", None)
+            b["data"] = {"headers": headers, "rows": rows}
             b["caption"] = _plain(b.get("caption"))
-            if not any(any(c for c in r) for r in b["rows"]):
+            if not headers and not any(any(c for c in r) for r in rows):
+                continue
+        elif t == "quote":
+            b["html"] = sanitize_inline_html(b.get("html") or escape(b.get("text", "")))
+            b["text"] = _strip_tags(b["html"])
+            b["cite"] = _plain(b.get("cite"))
+            if not b["text"]:
                 continue
         else:
             continue
         clean.append(b)
     post["content"] = clean
+    _assign_image_ids(post)
     return post
+
+
+def _assign_image_ids(post: dict) -> None:
+    """Give every `image` block a stable sequential `image_id` for CMS export.
+
+    The manager's import format identifies images by numeric id (`image_id`)
+    rather than a file path, so we emit both: `src` for our own rendering, and
+    `image_id` (1, 2, 3, …) for the downstream CMS.
+    """
+    next_id = 1
+    for b in post.get("content", []):
+        if b.get("type") == "image":
+            b["image_id"] = next_id
+            next_id += 1
 
 
 def safe_post_dir(rel: str) -> Path:

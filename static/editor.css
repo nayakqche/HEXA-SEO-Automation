@@ -169,3 +169,10 @@
 .paste-catch:empty:before { content: attr(data-placeholder); color: var(--muted); }
 .paste-catch:focus { outline: none; border-color: var(--green-bright); }
 .modal-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+
+/* Quote block: visually distinct from a plain paragraph */
+.quote-rich {
+  border-left: 3px solid var(--green-bright);
+  font-style: italic; padding-left: .8rem; color: var(--ink);
+}
+.quote-cite { font-size: .85rem; }
