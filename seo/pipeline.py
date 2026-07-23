@@ -252,6 +252,16 @@ def run(
                           f"{len(up_tables)} table(s), and pasted/other files as "
                           f"primary resources."}
 
+    # PERSONALIZED MODE: the post must be ABOUT the uploaded resource, not about
+    # the queue keyword. Derive the real topic from the uploads / brief and use
+    # it as the SEO focus so the title, slug, and headings revolve around it.
+    if personalized:
+        topic = _derive_topic(up_images, up_tables, extra_instructions,
+                              keywords[0] if keywords else "")
+        keywords = [topic]
+        yield {"event": "status",
+               "message": f"Personalized post topic (from your resources): {topic}"}
+
     # Shared, read-only config passed to each worker.
     job = {
         "run_id": run_id, "run_dir": run_dir,
@@ -446,6 +456,58 @@ def _cap_image_blocks(post: dict, *, limit: int = 2) -> None:
 
 # ── Uploaded-media embedding ───────────────────────────────────────────────
 
+def _clean_topic(s: str) -> str:
+    """Normalise a candidate topic string (strip extension, separators, noise)."""
+    s = re.sub(r"\.[a-z0-9]{1,5}$", "", (s or "").strip(), flags=re.I)  # drop extension
+    s = re.sub(r"^(Author's brief for this post:|Blog brief:)\s*", "", s, flags=re.I)
+    s = re.sub(r"[_]+", " ", s)               # underscores → spaces
+    s = re.sub(r"\s+", " ", s).strip(" -–—:·|")
+    return s
+
+
+def _derive_topic(images: list[dict], tables: list[dict],
+                  extra_instructions: str, fallback_keyword: str) -> str:
+    """Work out what a personalized post should actually be ABOUT.
+
+    Priority (most resource-specific first):
+      1. A description the user typed on an uploaded image/table.
+      2. The author's brief (folded into extra_instructions by app.py).
+      3. The filename of the first uploaded image/table.
+      4. The first row of an uploaded table (its headers).
+      5. The queue keyword as a last resort.
+    """
+    # 1. explicit per-resource descriptions
+    for item in list(images) + list(tables):
+        d = _clean_topic(item.get("description", ""))
+        if len(d) >= 6:
+            return d[:120]
+
+    # 2. author's brief (pulled back out of extra_instructions)
+    m = re.search(r"Author's brief for this post:\s*(.+)", extra_instructions or "", re.S)
+    if m:
+        b = _clean_topic(m.group(1))
+        if len(b) >= 6:
+            return b[:120]
+
+    # 3. filename of the first upload
+    for item in list(images) + list(tables):
+        n = _clean_topic(item.get("name", ""))
+        # skip generic auto names like "image", "img1234", "screenshot"
+        if len(n) >= 5 and not re.fullmatch(r"(image|img|photo|screenshot)\s*\d*", n, re.I):
+            return n[:120]
+
+    # 4. table header row
+    for tb in tables:
+        rows = tb.get("rows") or []
+        if rows and rows[0]:
+            hdr = _clean_topic(" ".join(str(c) for c in rows[0] if c))
+            if len(hdr) >= 6:
+                return hdr[:120]
+
+    # 5. fall back to whatever keyword was queued
+    return (fallback_keyword or "Hexa Climate developments update").strip()
+
+
 def _media_brief(images: list[dict], tables: list[dict], *, personalized: bool = False) -> str:
     """Tell Claude uploaded media is placed by the system, so it never duplicates it.
 
@@ -465,15 +527,11 @@ def _media_brief(images: list[dict], tables: list[dict], *, personalized: bool =
     ]
     if personalized:
         lines.append(
-            "PERSONALIZED / HEXA-UPDATE MODE — the uploads DEFINE the post's "
-            "topic. Do NOT treat the focus keyword as the subject. Instead: "
-            "1) Read every uploaded image description and table caption carefully; "
-            "2) Derive the post's title, subtitle, slug, first heading, and first "
-            "paragraph from the SUBJECT of those uploads (e.g. if an image is "
-            "about wind turbine spacing, the post is a Hexa update about wind "
-            "turbine spacing — not about the focus keyword's original topic); "
-            "3) Use the focus keyword only as an SEO hint that can be woven in "
-            "where it fits naturally, not as the topic itself. "
+            "PERSONALIZED / HEXA-UPDATE MODE — the focus keyword you were given "
+            "already IS the subject of the uploaded resource. Write the entire "
+            "post about that subject: title, subtitle, slug, first heading, and "
+            "intro paragraph all revolve around it. Do NOT pivot to rooftop "
+            "solar pricing, panel prices, or any unrelated consumer topic. "
             "The system places each uploaded image and table near the TOP of "
             "the post (right after the intro paragraph), so write your intro "
             "already introducing what the reader is about to see. For each "
