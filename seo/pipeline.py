@@ -443,9 +443,9 @@ def _process_keyword(i: int, keyword: str, job: dict) -> dict:
 def _ensure_internal_links(post: dict, primary_urls: list[str]) -> None:
     """Guarantee the post has internal links to primary URLs.
 
-    If the model produced fewer than 2 internal links, inject them into the
-    CTA paragraph (and intro paragraph if needed) so every blog ships with
-    Hexa links regardless of what the model decided to do.
+    If the model produced fewer than 3 internal links, inject them into the
+    CTA paragraph (and body paragraphs as needed) so every blog ships with
+    at least 3 Hexa links regardless of what the model decided to do.
     """
     if not primary_urls:
         return
@@ -455,7 +455,7 @@ def _ensure_internal_links(post: dict, primary_urls: list[str]) -> None:
         for lnk in b.get("links", []):
             if lnk.get("kind") == "internal":
                 existing += 1
-    if existing >= 2:
+    if existing >= 3:
         return
 
     _ANCHORS = [
@@ -472,7 +472,19 @@ def _ensure_internal_links(post: dict, primary_urls: list[str]) -> None:
     blogs_url = next((u for u in primary_urls if "/blog" in u.lower()), None)
     projects_url = next((u for u in primary_urls if "/project" in u.lower() or "/re-" in u.lower()), None)
 
-    needed = max(0, 2 - existing)
+    # Rotation order: CTA gets the main site; body paragraphs cycle through
+    # the distinct deep pages so we never link the same URL twice.
+    rotation = [u for u in (blogs_url, projects_url, main_url) if u]
+    for u in primary_urls:
+        if u not in rotation:
+            rotation.append(u)
+
+    already_used = set()
+    for b in post.get("content", []):
+        for lnk in b.get("links", []):
+            already_used.add(lnk.get("href"))
+
+    needed = max(0, 3 - existing)
     injected = 0
     content = post.get("content", [])
 
@@ -485,20 +497,16 @@ def _ensure_internal_links(post: dict, primary_urls: list[str]) -> None:
         if not text or len(text) < 40:
             continue
         links = b.setdefault("links", [])
-        used_urls = {lnk.get("href") for lnk in links}
         bid = b.get("id", "")
         is_cta = "cta" in bid.lower()
 
-        url = main_url
-        if is_cta:
+        if is_cta and main_url not in already_used:
             url = main_url
-        elif blogs_url and blogs_url not in used_urls:
-            url = blogs_url
-        elif projects_url and projects_url not in used_urls:
-            url = projects_url
-
-        if url in used_urls:
-            continue
+        else:
+            url = next((u for u in rotation if u not in already_used), None)
+        if url is None:
+            break
+        already_used.add(url)
 
         for anchor_text, _ in _ANCHORS:
             if anchor_text.lower() in text.lower():

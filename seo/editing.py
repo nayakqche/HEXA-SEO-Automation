@@ -91,6 +91,27 @@ def _plain(value) -> str:
     return _strip_tags(str(value)) if value is not None else ""
 
 
+def _links_to_html(text: str, links: list[dict] | None) -> str:
+    """Escape `text` to inline html, wrapping each link's anchor in <a href>.
+
+    Writer-generated blocks carry links as a `links: [{anchor, href}]` array
+    rather than inline html. When sanitize_post normalises such a block to the
+    CMS `html` field, the links must be baked into it as real <a> tags —
+    otherwise they'd be silently dropped from every export.
+    """
+    if not links:
+        return escape(text or "")
+    parts: list[str] = []
+    for seg, link in renderer._link_segments(text or "", links):
+        if link and _safe_href(link.get("href", "")):
+            parts.append(
+                f'<a href="{escape(link["href"].strip(), quote=True)}">{escape(seg)}</a>'
+            )
+        else:
+            parts.append(escape(seg))
+    return "".join(parts)
+
+
 def sanitize_post(post: dict) -> dict:
     """Coerce and sanitise an edited post in place, returning it."""
     # Plain-text metadata.
@@ -128,7 +149,9 @@ def sanitize_post(post: dict) -> dict:
             except (TypeError, ValueError):
                 b["level"] = 2
         elif t == "paragraph":
-            b["html"] = sanitize_inline_html(b.get("html") or escape(b.get("text", "")))
+            b["html"] = sanitize_inline_html(
+                b.get("html") or _links_to_html(b.get("text", ""), b.get("links"))
+            )
             b["text"] = _strip_tags(b["html"])
             b.pop("links", None)
             if not b["text"]:
@@ -136,7 +159,7 @@ def sanitize_post(post: dict) -> dict:
         elif t == "list":
             src = b.get("itemsHtml")
             if src is None:
-                src = [escape(x) for x in (b.get("items") or [])]
+                src = [_links_to_html(x, b.get("links")) for x in (b.get("items") or [])]
             items_html = [sanitize_inline_html(x) for x in src if _strip_tags(x).strip()]
             b["itemsHtml"] = items_html
             b["items"] = [_strip_tags(x) for x in items_html]
